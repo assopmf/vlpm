@@ -1,0 +1,34 @@
+# Déploiement le plus simple : « docker compose up -d ».
+# Les données restent dans le volume vlpm-donnees, y compris après une mise à
+# jour de l'image.
+
+services:
+  vlpm:
+    build:
+      context: .
+      args:
+        VERSION: ${VLPM_VERSION:-dev}
+    # Pour utiliser une image publiée plutôt que de compiler :
+    # image: ghcr.io/votre-organisation/vlpm:latest
+    container_name: vlpm
+    restart: unless-stopped
+    ports:
+      - "${VLPM_PORT:-8080}:8080"
+    volumes:
+      - vlpm-donnees:/data
+    environment:
+      # URL publique de l'application. Indispensable pour que les QR codes
+      # collés dans les véhicules s'ouvrent depuis l'appareil photo.
+      VLPM_BASE_URL: ${VLPM_BASE_URL:-}
+      # À activer si un reverse proxy (nginx, Caddy, Traefik) est devant.
+      VLPM_DERRIERE_PROXY: ${VLPM_DERRIERE_PROXY:-false}
+      TZ: ${TZ:-Europe/Paris}
+    # Renforcement : le conteneur n'a besoin d'aucun privilège particulier.
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  vlpm-donnees:

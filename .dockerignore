@@ -1,0 +1,10 @@
+.git/
+.github/
+data/
+dist/
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+README.md
+docs/

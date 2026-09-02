@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -17,6 +19,27 @@ var (
 // seule prise en compte. Au-delà, c'est presque toujours une faute de frappe :
 // le proto affichait "+18 053 km parcourus" pour une sortie de 24 minutes.
 const KMDeltaMax = 1500
+
+// FmtKM met en forme un kilométrage à la française (« 18 053 »), pour que les
+// messages du serveur se lisent comme ceux de l'interface.
+func FmtKM(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	tete := len(s) % 3
+	if tete > 0 {
+		b.WriteString(s[:tete])
+	}
+	for i := tete; i < len(s); i += 3 {
+		if b.Len() > 0 {
+			b.WriteString("\u202f") // espace fine insécable
+		}
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
+}
 
 const checkoutCols = `c.id, c.vehicle_id, c.user_id, c.statut, c.started_at, c.km_start,
 	c.ended_at, c.km_end, c.motif, c.notes_depart, c.notes_retour, c.check_depart, c.check_retour, c.cloture_par`
@@ -178,12 +201,12 @@ func (s *Store) PrendreEnCompte(p PriseEnCompte) (*Checkout, error) {
 	}
 
 	if p.KMStart < kmActuel {
-		return nil, fmt.Errorf("%w : %d km saisis, or le compteur est déjà à %d km",
-			ErrKMIncoherent, p.KMStart, kmActuel)
+		return nil, fmt.Errorf("%w : %s km saisis, or le compteur est déjà à %s km",
+			ErrKMIncoherent, FmtKM(p.KMStart), FmtKM(kmActuel))
 	}
 	if !p.Force && p.KMStart-kmActuel > KMDeltaMax {
-		return nil, fmt.Errorf("%w : écart de %d km depuis la dernière restitution (max %d sans confirmation)",
-			ErrKMIncoherent, p.KMStart-kmActuel, KMDeltaMax)
+		return nil, fmt.Errorf("%w : écart de %s km depuis la dernière restitution (maximum %s sans confirmation)",
+			ErrKMIncoherent, FmtKM(p.KMStart-kmActuel), FmtKM(KMDeltaMax))
 	}
 
 	if p.Check == "" {
@@ -241,12 +264,12 @@ func (s *Store) Restituer(r Restitution) (*Checkout, error) {
 		return nil, errors.New("cette prise en compte est déjà clôturée")
 	}
 	if r.KMEnd < kmStart {
-		return nil, fmt.Errorf("%w : %d km au retour, contre %d km au départ",
-			ErrKMIncoherent, r.KMEnd, kmStart)
+		return nil, fmt.Errorf("%w : %s km au retour, contre %s km au départ",
+			ErrKMIncoherent, FmtKM(r.KMEnd), FmtKM(kmStart))
 	}
 	if !r.Force && r.KMEnd-kmStart > KMDeltaMax {
-		return nil, fmt.Errorf("%w : %d km parcourus sur une seule sortie (max %d sans confirmation)",
-			ErrKMIncoherent, r.KMEnd-kmStart, KMDeltaMax)
+		return nil, fmt.Errorf("%w : %s km parcourus sur une seule sortie (maximum %s sans confirmation)",
+			ErrKMIncoherent, FmtKM(r.KMEnd-kmStart), FmtKM(KMDeltaMax))
 	}
 
 	if r.Check == "" {

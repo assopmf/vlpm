@@ -175,7 +175,8 @@ func (s *Server) patchVehicle(w http.ResponseWriter, r *http.Request) {
 	if req.KM != nil {
 		if *req.KM < v.KM {
 			erreur(w, http.StatusUnprocessableEntity,
-				fmt.Sprintf("Le kilométrage ne peut pas diminuer (compteur actuel : %d km).", v.KM), "km_incoherent")
+				fmt.Sprintf("Le kilométrage ne peut pas diminuer (compteur actuel : %s km).",
+					store.FmtKM(v.KM)), "km_incoherent")
 			return
 		}
 		v.KM = *req.KM

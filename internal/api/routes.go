@@ -1,11 +1,15 @@
 package api
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/assopmf/vlpm/web"
 )
@@ -100,6 +104,10 @@ func (s *Server) interfaceWeb() http.Handler {
 	}
 	serveur := http.FileServer(http.FS(fsys))
 
+	// Empreinte de l'ensemble des fichiers servis. Elle change dès qu'un octet
+	// de l'interface change, donc à chaque nouvelle version du binaire.
+	etag := empreinte(fsys)
+
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		chemin := strings.TrimPrefix(r.URL.Path, "/")
 		if chemin == "" {
@@ -111,13 +119,44 @@ func (s *Server) interfaceWeb() http.Handler {
 			servirIndex(w, r, fsys)
 			return
 		}
-		if strings.HasSuffix(chemin, ".html") {
-			w.Header().Set("Cache-Control", "no-cache")
+
+		// "no-cache" n'interdit pas la mise en cache : il impose de revalider.
+		// Le navigateur renvoie son ETag, on répond 304 si rien n'a bougé. Une
+		// mise à jour du serveur est donc prise en compte au rechargement
+		// suivant, sans laisser les agents sur une interface périmée.
+		if s.cfg.Dev {
+			w.Header().Set("Cache-Control", "no-store")
 		} else {
-			w.Header().Set("Cache-Control", "public, max-age=3600")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("ETag", etag)
+			if r.Header.Get("If-None-Match") == etag {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
 		}
 		serveur.ServeHTTP(w, r)
 	})
+}
+
+// empreinte calcule un ETag couvrant tous les fichiers de l'interface.
+func empreinte(fsys fs.FS) string {
+	h := sha256.New()
+	err := fs.WalkDir(fsys, ".", func(chemin string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		contenu, err := fs.ReadFile(fsys, chemin)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(h, "%s:%x\n", chemin, sha256.Sum256(contenu))
+		return nil
+	})
+	if err != nil {
+		// Sans empreinte fiable, mieux vaut ne jamais servir de cache périmé.
+		return fmt.Sprintf("%q", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%q", hex.EncodeToString(h.Sum(nil))[:16])
 }
 
 func servirIndex(w http.ResponseWriter, r *http.Request, fsys fs.FS) {

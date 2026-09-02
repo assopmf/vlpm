@@ -1,0 +1,21 @@
+# Données d'exécution : base SQLite, journaux WAL, sauvegardes.
+# Ne doivent jamais partir dans le dépôt (données nominatives d'agents).
+/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Binaires compilés
+/vlpm
+/vlpm-*
+/dist/
+*.exe
+
+# Système
+.DS_Store
+Thumbs.db
+
+# Éditeurs
+.idea/
+.vscode/
+*.swp

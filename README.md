@@ -66,8 +66,18 @@ docker compose up -d
 docker compose logs | grep -A3 'PREMIER DÉMARRAGE'
 ```
 
+La seconde commande affiche le mot de passe administrateur du premier
+démarrage.
+
 Les données vivent dans un volume nommé : mettre à jour l'image ne les efface
-pas.
+pas. Le conteneur tourne sans privilèges, en lecture seule et sous un compte
+non privilégié (uid 10001) ; l'image pèse environ 36 Mo.
+
+Pour changer le port publié :
+
+```bash
+VLPM_PORT=9000 docker compose up -d
+```
 
 ### Hébergement mutualisé
 
@@ -267,13 +277,21 @@ de la base ne permet pas de rejouer les sessions ouvertes.
 
 ---
 
+## Licence
+
+[EUPL-1.2](LICENSE) — Licence Publique de l'Union Européenne.
+
+Ce choix tient à la nature du projet : l'EUPL est conçue pour les
+administrations publiques européennes, elle fait foi en français comme dans les
+22 autres langues officielles, et son copyleft garantit qu'une commune qui
+améliore l'application en fasse profiter les autres. Elle est compatible avec
+l'AGPL, la GPL et plusieurs autres licences réciproques, dont la liste figure en
+annexe du texte.
+
 ## Limites connues
 
 - **Pas encore éprouvé en service réel.** Le parcours complet est testé, mais
   aucune commune ne l'utilise encore au quotidien.
-- **Image Docker non vérifiée.** Le `Dockerfile` est écrit mais n'a pas pu être
-  construit sur la machine de développement. À valider avant tout déploiement
-  par ce biais.
 - **Service worker non vérifié.** La mise en cache de l'interface a été écrite
   mais n'a pas pu être testée : le navigateur d'intégration utilisé pendant le
   développement refuse les service workers. La file d'attente hors ligne, elle,

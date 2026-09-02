@@ -57,6 +57,9 @@ func (s *Server) Handler() http.Handler {
 	// --- Pilotage ---
 	mux.HandleFunc("GET /api/v1/stats", s.authentifier(s.getStats))
 	mux.HandleFunc("GET /api/v1/export/prises.csv", s.exiger("chef", s.getExportCSV))
+	mux.HandleFunc("GET /api/v1/export/parc.csv", s.exiger("chef", s.getExportVehicules))
+	mux.HandleFunc("GET /api/v1/export/incidents.csv", s.exiger("chef", s.getExportIncidents))
+	mux.HandleFunc("GET /api/v1/export/entretiens.csv", s.exiger("chef", s.getExportEntretiens))
 	mux.HandleFunc("GET /api/v1/journal", s.exiger("admin", s.getAudit))
 
 	// --- Comptes ---

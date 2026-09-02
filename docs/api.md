@@ -56,6 +56,7 @@ identifiant stable, destiné au traitement programmatique.
 | `introuvable` | 404 | Ressource inexistante |
 | `deja_en_service` | 409 | Véhicule déjà pris en compte |
 | `deja_detenteur` | 409 | L'agent détient déjà un autre véhicule |
+| `agent_introuvable` | 404 | L'agent désigné par `agent_id` n'existe pas |
 | `indisponible` | 409 | Véhicule en maintenance ou hors service |
 | `doublon` | 409 | Code véhicule ou matricule déjà utilisé |
 | `statut_pilote` | 409 | Statut « en service » non modifiable à la main |
@@ -148,6 +149,27 @@ de faire évoluer l'état des lieux sans migration.
 
 Refusée si le véhicule n'est pas disponible, ou si l'agent détient déjà un autre
 véhicule.
+
+#### Saisir au nom d'un agent
+
+`agent_id` permet à un **chef** d'enregistrer la sortie d'un équipage qui ne peut
+pas le faire lui-même — téléphone oublié, saisie au poste avant le départ.
+
+```json
+{"vehicule_id": 1, "km": 45280, "agent_id": 7, "motif": "Patrouille secteur centre"}
+```
+
+La sortie est alors attribuée à l'agent (`user_id`), et `saisi_par` porte
+l'identifiant de celui qui a saisi. Sans cette distinction, la main courante
+désignerait le chef comme détenteur du véhicule.
+
+Un agent qui fournit un `agent_id` autre que le sien reçoit `403
+droits_insuffisants`. Un compte désactivé ne peut pas se voir confier un
+véhicule. La règle du détenteur unique porte sur l'agent, pas sur celui qui
+saisit : un chef peut équiper plusieurs équipages d'affilée.
+
+L'agent concerné restitue ensuite normalement, sans que cela compte comme une
+clôture par un tiers.
 
 ### Restituer
 
@@ -271,11 +293,18 @@ true` fait repasser en `disponible` un véhicule en maintenance.
 | Route | Rôle | Description |
 |---|---|---|
 | `GET /stats` | agent | Compteurs du tableau de bord |
-| `GET /export/prises.csv` | chef | Historique en CSV |
+| `GET /export/prises.csv` | chef | Historique des sorties |
+| `GET /export/parc.csv` | chef | Inventaire du parc et échéances |
+| `GET /export/incidents.csv` | chef | Signalements et suivi de sinistralité |
+| `GET /export/entretiens.csv` | chef | Entretiens et coûts, avec ligne de total |
 | `GET /journal` | admin | Journal d'audit |
 
-Le CSV est encodé en UTF-8 avec BOM et séparé par des points-virgules, pour
-s'ouvrir directement dans Excel en configuration française.
+Tous les CSV sont encodés en UTF-8 avec BOM et séparés par des points-virgules,
+pour s'ouvrir directement dans Excel en configuration française. Les montants
+emploient la virgule décimale, seule forme qu'Excel y reconnaît comme un nombre.
+
+Filtres : `vehicule` sur les quatre, `statut`, `depuis` et `jusqua` sur
+`prises.csv`, `statut` sur `incidents.csv`, `archives=1` sur `parc.csv`.
 
 ## Comptes
 

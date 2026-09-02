@@ -16,6 +16,7 @@ var (
 	ErrDejaEnregistre = errors.New("opération déjà enregistrée")
 
 	ErrVehiculeIndisponible = errors.New("véhicule indisponible")
+	ErrAgentDejaDetenteur   = errors.New("cet agent détient déjà un véhicule")
 	ErrDejaEnService        = errors.New("véhicule déjà pris en compte")
 	ErrKMIncoherent         = errors.New("kilométrage incohérent")
 	ErrHorodatageInvalide   = errors.New("horodatage invalide")
@@ -49,15 +50,17 @@ func FmtKM(n int64) string {
 
 const checkoutCols = `c.id, c.vehicle_id, c.user_id, c.statut, c.started_at, c.km_start,
 	c.ended_at, c.km_end, c.motif, c.notes_depart, c.notes_retour, c.check_depart, c.check_retour,
-	c.cloture_par, c.depart_hors_ligne, c.retour_hors_ligne, c.created_at, c.retour_enregistre_at`
+	c.cloture_par, c.depart_hors_ligne, c.retour_hors_ligne, c.created_at, c.retour_enregistre_at,
+	c.saisi_par`
 
 func scanCheckout(row interface{ Scan(...any) error }, joint bool) (*Checkout, error) {
 	var c Checkout
 	var endedAt, retourEnregistre sql.NullString
-	var kmEnd, cloture sql.NullInt64
+	var kmEnd, cloture, saisiPar sql.NullInt64
 	dest := []any{&c.ID, &c.VehicleID, &c.UserID, &c.Statut, &c.StartedAt, &c.KMStart,
 		&endedAt, &kmEnd, &c.Motif, &c.NotesDepart, &c.NotesRetour, &c.CheckDepart, &c.CheckRetour,
-		&cloture, &c.DepartHorsLigne, &c.RetourHorsLigne, &c.EnregistreAt, &retourEnregistre}
+		&cloture, &c.DepartHorsLigne, &c.RetourHorsLigne, &c.EnregistreAt, &retourEnregistre,
+		&saisiPar}
 	if joint {
 		dest = append(dest, &c.VehicleCode, &c.UserNom)
 	}
@@ -72,6 +75,7 @@ func scanCheckout(row interface{ Scan(...any) error }, joint bool) (*Checkout, e
 	c.RetourEnregistreAt = ns(retourEnregistre)
 	c.KMEnd = ni(kmEnd)
 	c.ClotureID = ni(cloture)
+	c.SaisiParID = ni(saisiPar)
 	if c.KMEnd != nil {
 		d := *c.KMEnd - c.KMStart
 		c.Distance = &d
@@ -188,6 +192,10 @@ type PriseEnCompte struct {
 	CleClient    string
 	DebutDeclare time.Time
 	HorsLigne    bool
+
+	// SaisiPar est renseigné lorsqu'un chef enregistre la sortie au nom de
+	// l'agent : UserID reste celui qui détient le véhicule et en répond.
+	SaisiPar int64
 }
 
 // PrendreEnCompte confie un véhicule à un agent. L'opération est atomique : le
@@ -227,6 +235,20 @@ func (s *Store) PrendreEnCompte(p PriseEnCompte) (*Checkout, error) {
 		return nil, fmt.Errorf("%w : statut %q", ErrVehiculeIndisponible, statut)
 	}
 
+	// L'agent ne peut détenir qu'un véhicule à la fois. Le contrôle est dans la
+	// transaction, et non côté API, car un chef peut désormais ouvrir une
+	// sortie au nom d'un tiers : deux saisies simultanées pour le même agent
+	// sont possibles.
+	var dejaCode string
+	err = tx.QueryRow(`SELECT v.code FROM checkouts c JOIN vehicles v ON v.id = c.vehicle_id
+		WHERE c.user_id = ? AND c.statut = 'en_cours'`, p.UserID).Scan(&dejaCode)
+	if err == nil {
+		return nil, fmt.Errorf("%w : %s", ErrAgentDejaDetenteur, dejaCode)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+
 	if p.KMStart < kmActuel {
 		return nil, fmt.Errorf("%w : %s km saisis, or le compteur est déjà à %s km",
 			ErrKMIncoherent, FmtKM(p.KMStart), FmtKM(kmActuel))
@@ -243,12 +265,16 @@ func (s *Store) PrendreEnCompte(p PriseEnCompte) (*Checkout, error) {
 	if err != nil {
 		return nil, err
 	}
+	var saisiPar any
+	if p.SaisiPar > 0 && p.SaisiPar != p.UserID {
+		saisiPar = p.SaisiPar
+	}
 	res, err := tx.Exec(`INSERT INTO checkouts
 		(vehicle_id, user_id, statut, started_at, km_start, motif, notes_depart, check_depart,
-		 cle_client, depart_hors_ligne)
-		VALUES (?,?,'en_cours',?,?,?,?,?,?,?)`,
+		 cle_client, depart_hors_ligne, saisi_par)
+		VALUES (?,?,'en_cours',?,?,?,?,?,?,?,?)`,
 		p.VehicleID, p.UserID, debut, p.KMStart, p.Motif, p.Notes, p.Check,
-		nullIfEmpty(p.CleClient), p.HorsLigne)
+		nullIfEmpty(p.CleClient), p.HorsLigne, saisiPar)
 	if err != nil {
 		return nil, err
 	}

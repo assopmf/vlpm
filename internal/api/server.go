@@ -72,6 +72,9 @@ func erreurStore(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		erreur(w, http.StatusNotFound, "Ressource introuvable.", "introuvable")
+	case errors.Is(err, store.ErrAgentDejaDetenteur):
+		erreur(w, http.StatusConflict,
+			majuscule(err.Error())+". Il doit le restituer avant d'en prendre un autre.", "deja_detenteur")
 	case errors.Is(err, store.ErrDejaEnService):
 		erreur(w, http.StatusConflict, "Ce véhicule est déjà pris en compte par un autre agent.", "deja_en_service")
 	case errors.Is(err, store.ErrVehiculeIndisponible):

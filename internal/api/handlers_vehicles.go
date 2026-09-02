@@ -283,6 +283,30 @@ func nouveauQRToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+// --- Exports CSV ---
+//
+// Tous les exports partagent le même format : UTF-8 avec BOM et séparateur
+// point-virgule, ce qu'attend Excel en configuration française. Sans le BOM,
+// les accents sont illisibles ; sans le point-virgule, tout atterrit dans une
+// seule colonne.
+
+// ecrireCSV envoie un tableau en pièce jointe. Le nom du fichier porte la date
+// du jour, pour que plusieurs exports successifs ne s'écrasent pas.
+func ecrireCSV(w http.ResponseWriter, sujet string, entetes []string, lignes [][]string) {
+	nom := fmt.Sprintf("vlpm-%s-%s.csv", sujet, time.Now().Format("2006-01-02"))
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", nom))
+	w.Write([]byte{0xEF, 0xBB, 0xBF})
+
+	c := csv.NewWriter(w)
+	c.Comma = ';'
+	defer c.Flush()
+	c.Write(entetes)
+	for _, l := range lignes {
+		c.Write(l)
+	}
+}
+
 // getExportCSV exporte l'historique des prises en compte, pour l'archivage
 // communal ou un tableur.
 func (s *Server) getExportCSV(w http.ResponseWriter, r *http.Request) {
@@ -291,37 +315,179 @@ func (s *Server) getExportCSV(w http.ResponseWriter, r *http.Request) {
 		Statut:    r.URL.Query().Get("statut"),
 		Depuis:    r.URL.Query().Get("depuis"),
 		Jusqua:    r.URL.Query().Get("jusqua"),
-		Limit:     500,
+		Limit:     5000,
 	}
-	lignes, err := s.st.ListCheckouts(f)
+	prises, err := s.st.ListCheckouts(f)
 	if err != nil {
 		erreurStore(w, err)
 		return
 	}
-	nom := fmt.Sprintf("vlpm-historique-%s.csv", time.Now().Format("2006-01-02"))
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", nom))
-	// BOM UTF-8 : sans lui, Excel en français massacre les accents.
-	w.Write([]byte{0xEF, 0xBB, 0xBF})
 
-	c := csv.NewWriter(w)
-	c.Comma = ';' // séparateur attendu par Excel en configuration française
-	defer c.Flush()
-	c.Write([]string{"Véhicule", "Agent", "Départ", "KM départ", "Retour", "KM retour",
-		"Distance (km)", "Motif", "Observations départ", "Observations retour"})
-	for _, l := range lignes {
-		kmEnd, dist := "", ""
-		if l.KMEnd != nil {
-			kmEnd = strconv.FormatInt(*l.KMEnd, 10)
-		}
-		if l.Distance != nil {
-			dist = strconv.FormatInt(*l.Distance, 10)
-		}
-		c.Write([]string{l.VehicleCode, l.UserNom, dateFR(l.StartedAt),
-			strconv.FormatInt(l.KMStart, 10), dateFR(l.EndedAt), kmEnd, dist,
-			l.Motif, l.NotesDepart, l.NotesRetour})
+	lignes := make([][]string, 0, len(prises))
+	for _, l := range prises {
+		lignes = append(lignes, []string{
+			l.VehicleCode, l.UserNom, dateFR(l.StartedAt), entier(l.KMStart),
+			dateFR(l.EndedAt), entierPtr(l.KMEnd), entierPtr(l.Distance),
+			l.Motif, l.NotesDepart, l.NotesRetour,
+			ouiNon(l.DepartHorsLigne || l.RetourHorsLigne),
+		})
 	}
+	ecrireCSV(w, "historique", []string{
+		"Véhicule", "Agent", "Départ", "KM départ", "Retour", "KM retour",
+		"Distance (km)", "Motif", "Observations départ", "Observations retour",
+		"Saisi hors ligne",
+	}, lignes)
 }
+
+// getExportVehicules exporte l'état du parc : inventaire communal, échéances.
+func (s *Server) getExportVehicules(w http.ResponseWriter, r *http.Request) {
+	vs, err := s.st.ListVehicles("", r.URL.Query().Get("archives") == "1")
+	if err != nil {
+		erreurStore(w, err)
+		return
+	}
+
+	lignes := make([][]string, 0, len(vs))
+	for _, v := range vs {
+		detenteur := ""
+		if v.CheckoutEnCours != nil {
+			detenteur = v.CheckoutEnCours.UserNom
+		}
+		lignes = append(lignes, []string{
+			v.Code, v.Marque, v.Modele, v.Immatriculation, v.Categorie,
+			libelleStatut(v.Statut), entier(v.KM),
+			dateFRCourte(v.DateMiseCirculation), dateFRCourte(v.ProchainCT),
+			entierPtr(v.ProchaineRevisionKM), detenteur,
+			entier(int64(v.IncidentsOuverts)), v.Notes,
+		})
+	}
+	ecrireCSV(w, "parc", []string{
+		"Code", "Marque", "Modèle", "Immatriculation", "Catégorie", "Statut",
+		"Kilométrage", "Mise en circulation", "Prochain CT", "Prochaine révision (km)",
+		"Détenteur actuel", "Incidents ouverts", "Notes",
+	}, lignes)
+}
+
+// getExportIncidents exporte les signalements, pour un suivi de sinistralité.
+func (s *Server) getExportIncidents(w http.ResponseWriter, r *http.Request) {
+	statut := r.URL.Query().Get("statut")
+	if statut == "" {
+		statut = "tous"
+	}
+	incidents, err := s.st.ListIncidents(int64(queryInt(r, "vehicule", 0)), statut)
+	if err != nil {
+		erreurStore(w, err)
+		return
+	}
+
+	lignes := make([][]string, 0, len(incidents))
+	for _, i := range incidents {
+		lignes = append(lignes, []string{
+			i.VehicleCode, dateFR(i.CreatedAt), i.UserNom,
+			libelleType(i.Type), libelleGravite(i.Gravite), i.Description,
+			libelleStatutIncident(i.Statut), dateFR(i.ResoluAt),
+		})
+	}
+	ecrireCSV(w, "incidents", []string{
+		"Véhicule", "Signalé le", "Signalé par", "Nature", "Gravité",
+		"Description", "Statut", "Résolu le",
+	}, lignes)
+}
+
+// getExportEntretiens exporte les entretiens et leurs coûts, pour le budget.
+func (s *Server) getExportEntretiens(w http.ResponseWriter, r *http.Request) {
+	entretiens, err := s.st.ListMaintenances(int64(queryInt(r, "vehicule", 0)))
+	if err != nil {
+		erreurStore(w, err)
+		return
+	}
+
+	var total int64
+	lignes := make([][]string, 0, len(entretiens)+1)
+	for _, m := range entretiens {
+		total += m.CoutCents
+		lignes = append(lignes, []string{
+			m.VehicleCode, dateFRCourte(m.Date), libelleEntretien(m.Type),
+			entierPtr(m.KM), montant(m.CoutCents), m.Prestataire, m.Description,
+		})
+	}
+	// Ligne de total : un export destiné au budget doit se suffire à lui-même.
+	if len(lignes) > 0 {
+		lignes = append(lignes, []string{"", "", "TOTAL", "", montant(total), "", ""})
+	}
+	ecrireCSV(w, "entretiens", []string{
+		"Véhicule", "Date", "Nature", "Kilométrage", "Coût (€)", "Prestataire", "Description",
+	}, lignes)
+}
+
+// --- Mise en forme des colonnes ---
+
+func entier(n int64) string { return strconv.FormatInt(n, 10) }
+
+func entierPtr(n *int64) string {
+	if n == nil {
+		return ""
+	}
+	return strconv.FormatInt(*n, 10)
+}
+
+// montant utilise la virgule décimale, seule forme reconnue comme un nombre
+// par Excel en configuration française.
+func montant(centimes int64) string {
+	return fmt.Sprintf("%d,%02d", centimes/100, centimes%100)
+}
+
+func ouiNon(b bool) string {
+	if b {
+		return "oui"
+	}
+	return "non"
+}
+
+func dateFRCourte(iso string) string {
+	if iso == "" {
+		return ""
+	}
+	if t, err := time.Parse("2006-01-02", iso); err == nil {
+		return t.Format("02/01/2006")
+	}
+	return dateFR(iso)
+}
+
+var (
+	libellesStatut = map[string]string{
+		"disponible": "Disponible", "en_service": "En service",
+		"maintenance": "Maintenance", "hors_service": "Hors service",
+	}
+	libellesType = map[string]string{
+		"dommage": "Dommage", "panne": "Panne", "proprete": "Propreté",
+		"carburant": "Carburant", "equipement": "Équipement", "autre": "Autre",
+	}
+	libellesGravite = map[string]string{
+		"mineur": "Mineur", "majeur": "Majeur", "immobilisant": "Immobilisant",
+	}
+	libellesStatutIncident = map[string]string{
+		"ouvert": "Ouvert", "en_cours": "En cours de traitement", "resolu": "Résolu",
+	}
+	libellesEntretien = map[string]string{
+		"revision": "Révision", "reparation": "Réparation",
+		"controle_technique": "Contrôle technique", "pneus": "Pneumatiques",
+		"carburant": "Carburant", "autre": "Autre",
+	}
+)
+
+func libelle(m map[string]string, cle string) string {
+	if v, ok := m[cle]; ok {
+		return v
+	}
+	return cle
+}
+
+func libelleStatut(v string) string         { return libelle(libellesStatut, v) }
+func libelleType(v string) string           { return libelle(libellesType, v) }
+func libelleGravite(v string) string        { return libelle(libellesGravite, v) }
+func libelleStatutIncident(v string) string { return libelle(libellesStatutIncident, v) }
+func libelleEntretien(v string) string      { return libelle(libellesEntretien, v) }
 
 func dateFR(iso string) string {
 	if iso == "" {

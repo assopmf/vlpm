@@ -410,6 +410,19 @@ async function vuePriseEnCompte(vehiculeId) {
     return;
   }
   const v = charge.vehicule;
+  const moi = session.utilisateur();
+
+  // Un chef peut enregistrer la sortie au nom d'un équipage qui ne peut pas le
+  // faire lui-même — téléphone oublié, saisie au poste avant le départ.
+  // Impossible hors ligne : la liste des agents vient du serveur.
+  let agents = [];
+  if (session.peut('chef') && !charge.horsLigne) {
+    try {
+      agents = await api.agents();
+    } catch {
+      agents = []; // sans la liste, on retombe sur une saisie à son propre nom
+    }
+  }
 
   if (v.statut !== 'disponible') {
     poser(retour('/') + message('erreur',
@@ -438,6 +451,17 @@ async function vuePriseEnCompte(vehiculeId) {
           <input type="text" id="motif" name="motif"
                  placeholder="Patrouille secteur centre, transfert, formation…">
         </div>
+        ${agents.length > 1 ? `
+          <div class="champ" style="margin-bottom:0">
+            <label for="agent">Véhicule confié à</label>
+            <select id="agent" name="agent">
+              ${agents.map((a) => `<option value="${a.id}"${a.id === moi.id ? ' selected' : ''}>
+                ${esc(a.prenom)} ${esc(a.nom)} — ${esc(a.matricule)}${a.id === moi.id ? ' (vous)' : ''}
+              </option>`).join('')}
+            </select>
+            <p class="aide">Pour enregistrer la sortie d'un équipage qui ne peut pas
+              le faire lui-même. La saisie reste tracée à votre nom.</p>
+          </div>` : ''}
       </div>
 
       <div class="carte">
@@ -471,12 +495,15 @@ async function envoyerPrise(form, v, force) {
     check: releverControle(form, 'depart'),
     force,
   };
+  if (form.agent) donnees.agent_id = Number(form.agent.value);
 
   try {
     const c = await api.prendreEnCompte({ ...donnees, cle_client: nouvelleCle() });
     await aller('/');
-    poserMessage('succes',
-      `${c.vehicle_code} pris en compte à ${nombre(c.km_start)} km. Bonne patrouille.`);
+    const moi = session.utilisateur();
+    poserMessage('succes', c.user_id === moi.id
+      ? `${c.vehicle_code} pris en compte à ${nombre(c.km_start)} km. Bonne patrouille.`
+      : `${c.vehicle_code} confié à ${c.user_nom} à ${nombre(c.km_start)} km.`);
   } catch (err) {
     // Réseau absent : la sortie est enregistrée sur l'appareil et transmise
     // plus tard. Un agent en sous-sol ne doit pas être empêché de partir.
@@ -967,7 +994,7 @@ function ligneHistorique(c) {
         <strong>${esc(c.vehicle_code)}</strong>
         ${badge(c.statut, { en_cours: 'En cours', termine: 'Terminé' })}
       </div>
-      <div class="discret">${icones.agent ? '' : ''}${esc(c.user_nom)}</div>
+      <div class="discret">${esc(c.user_nom)}${c.saisi_par ? ' (sortie saisie au poste)' : ''}</div>
       <div class="discret">Départ ${dateHeure(c.started_at)} — ${nombre(c.km_start)} km</div>
       ${c.ended_at
         ? `<div class="discret">Retour ${dateHeure(c.ended_at)} — ${nombre(c.km_end)} km</div>${distance}`
@@ -1594,6 +1621,23 @@ async function vueReglages() {
     </div>
 
     ${session.peut('chef') ? `
+      <div class="carte">
+        <h2 style="margin-bottom:6px">Exporter les données</h2>
+        <p class="discret" style="margin-bottom:14px">Fichiers CSV, lisibles directement
+          dans Excel ou LibreOffice.</p>
+        <div class="duo" style="margin-bottom:12px">
+          <button class="btn secondaire compact" style="width:100%"
+                  data-action="export" data-fichier="prises">Historique des sorties</button>
+          <button class="btn secondaire compact" style="width:100%"
+                  data-action="export" data-fichier="parc">État du parc</button>
+        </div>
+        <div class="duo" style="margin-bottom:0">
+          <button class="btn secondaire compact" style="width:100%"
+                  data-action="export" data-fichier="incidents">Incidents</button>
+          <button class="btn secondaire compact" style="width:100%"
+                  data-action="export" data-fichier="entretiens">Entretiens et coûts</button>
+        </div>
+      </div>
       <a class="btn secondaire" href="/agents" style="margin-bottom:12px">
         ${icones.agent} Gérer les agents</a>` : ''}
     ${session.peut('admin') ? `
@@ -1623,7 +1667,12 @@ async function vueReglages() {
     });
   });
 
-  surClic(async (action) => {
+  surClic(async (action, data) => {
+    if (action === 'export') {
+      await telecharger(`/api/v1/export/${data.fichier}.csv`,
+        `vlpm-${data.fichier}.csv`);
+      return;
+    }
     if (action !== 'deconnexion') return;
     try {
       await api.deconnexion();

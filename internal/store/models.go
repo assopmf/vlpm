@@ -63,6 +63,8 @@ type Checkout struct {
 	CheckDepart string `json:"check_depart"`
 	CheckRetour string `json:"check_retour"`
 	ClotureID   *int64 `json:"cloture_par,omitempty"`
+	// SaisiParID : renseigné quand un chef a ouvert la sortie au nom de l'agent.
+	SaisiParID *int64 `json:"saisi_par,omitempty"`
 
 	// Traçabilité des opérations réalisées sans réseau. StartedAt et EndedAt
 	// portent l'heure déclarée par l'appareil ; EnregistreAt et

@@ -151,7 +151,7 @@ Chaque option a son équivalent en variable d'environnement.
 | Rôle | Peut faire |
 |---|---|
 | **Agent** | Prendre en compte et restituer un véhicule, signaler un incident, consulter ses propres sorties |
-| **Chef de service** | Tout cela, plus : gérer le parc, les agents, les entretiens, clôturer la sortie d'un agent absent, exporter l'historique |
+| **Chef de service** | Tout cela, plus : gérer le parc, les agents, les entretiens, enregistrer une sortie au nom d'un agent, clôturer la sortie d'un agent absent, exporter les données |
 | **Administrateur** | Tout cela, plus : gérer les comptes administrateurs et consulter le journal d'activité |
 
 ### Le parcours quotidien
@@ -163,6 +163,20 @@ Chaque option a son équivalent en variable d'environnement.
 Un incident déclaré « immobilisant » place automatiquement le véhicule en
 maintenance : il ne peut plus être pris en compte tant qu'un chef n'a pas
 enregistré la remise en état.
+
+### Équipage sans téléphone
+
+Un chef peut enregistrer la sortie au nom d'un agent depuis le poste, via le
+champ « Véhicule confié à » du formulaire de prise en compte. Le véhicule est
+attribué à l'agent, qui en répond ; la saisie reste tracée au nom du chef, dans
+la fiche comme dans le journal d'audit. L'agent restitue ensuite normalement.
+
+### Exporter les données
+
+Depuis les Réglages, un chef exporte quatre tableaux en CSV : historique des
+sorties, état du parc, incidents, entretiens et coûts. Les fichiers s'ouvrent
+directement dans Excel ou LibreOffice en configuration française, accents et
+montants compris.
 
 ### Étiquettes QR
 

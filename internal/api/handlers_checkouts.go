@@ -43,6 +43,10 @@ type requetePrise struct {
 	Check      json.RawMessage `json:"check"`
 	Force      bool            `json:"force"`
 
+	// AgentID permet à un chef d'enregistrer la sortie au nom d'un agent qui
+	// ne peut pas le faire lui-même : téléphone oublié, saisie au poste.
+	AgentID int64 `json:"agent_id"`
+
 	// Renseignés par un client qui rejoue une saisie faite sans réseau.
 	CleClient string `json:"cle_client"`
 	DateDebut string `json:"date_debut"`
@@ -91,13 +95,29 @@ func (s *Server) postPriseEnCompte(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Un agent ne peut détenir qu'un véhicule à la fois : sans cette règle, un
-	// oubli de restitution laisse deux sorties ouvertes à son nom.
-	if enCours, err := s.st.CheckoutEnCoursPourAgent(u.ID); err == nil {
-		erreur(w, http.StatusConflict,
-			fmt.Sprintf("Vous détenez déjà le véhicule %s. Restituez-le avant d'en prendre un autre.", enCours.VehicleCode),
-			"deja_detenteur")
-		return
+	// Détenteur de la sortie : l'utilisateur connecté, sauf si un chef la
+	// saisit au nom d'un agent. Le contrôle du détenteur unique est fait dans
+	// la transaction, pour résister aux saisies concurrentes.
+	detenteur := u
+	if req.AgentID > 0 && req.AgentID != u.ID {
+		if !u.Peut("chef") {
+			erreur(w, http.StatusForbidden,
+				"Seul un chef de service peut enregistrer une sortie au nom d'un autre agent.",
+				"droits_insuffisants")
+			return
+		}
+		agent, err := s.st.UserByID(req.AgentID)
+		if err != nil {
+			erreur(w, http.StatusNotFound, "Cet agent est introuvable.", "agent_introuvable")
+			return
+		}
+		if !agent.Actif {
+			erreur(w, http.StatusUnprocessableEntity,
+				"Le compte de cet agent est désactivé : il ne peut pas se voir confier un véhicule.",
+				"compte_inactif")
+			return
+		}
+		detenteur = agent
 	}
 
 	debut, err := horodatage(req.DateDebut)
@@ -107,9 +127,10 @@ func (s *Server) postPriseEnCompte(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c, err := s.st.PrendreEnCompte(store.PriseEnCompte{
-		VehicleID: vehiculeID, UserID: u.ID, KMStart: *req.KM,
+		VehicleID: vehiculeID, UserID: detenteur.ID, KMStart: *req.KM,
 		Motif: req.Motif, Notes: req.Notes, Check: jsonOuVide(req.Check), Force: req.Force,
 		CleClient: strings.TrimSpace(req.CleClient), DebutDeclare: debut, HorsLigne: req.HorsLigne,
+		SaisiPar: u.ID,
 	})
 	if errors.Is(err, store.ErrDejaEnregistre) {
 		// Rejeu : l'opération avait déjà abouti. On répond un succès pour que
@@ -121,8 +142,11 @@ func (s *Server) postPriseEnCompte(w http.ResponseWriter, r *http.Request) {
 		erreurStore(w, err)
 		return
 	}
-	s.st.Audit(u.ID, "prise_en_compte", "checkout", c.ID,
-		fmt.Sprintf("%s à %d km", c.VehicleCode, c.KMStart), s.ipDe(r))
+	details := fmt.Sprintf("%s à %s km", c.VehicleCode, store.FmtKM(c.KMStart))
+	if detenteur.ID != u.ID {
+		details += fmt.Sprintf(" — saisi au nom de %s", detenteur.NomComplet())
+	}
+	s.st.Audit(u.ID, "prise_en_compte", "checkout", c.ID, details, s.ipDe(r))
 	ecrireJSON(w, http.StatusCreated, c)
 }
 

@@ -1,0 +1,20 @@
+{
+  "name": "VLPM — Gestion du parc automobile",
+  "short_name": "VLPM",
+  "description": "Prise en compte et restitution des véhicules de patrouille",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f1f5f9",
+  "theme_color": "#1e3a8a",
+  "lang": "fr",
+  "icons": [
+    {
+      "src": "/icone.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -82,15 +82,31 @@ func (s *Store) incidentsOuvertsParVehicule() (map[int64]int, error) {
 	return m, rows.Err()
 }
 
+// CreateIncident enregistre un signalement. Une CleClient déjà vue signifie
+// que le signalement avait été reçu : on renvoie ErrDejaEnregistre plutôt que
+// d'en créer un doublon.
 func (s *Store) CreateIncident(i *Incident) error {
+	if i.CleClient != "" {
+		var existant int64
+		err := s.DB.QueryRow(`SELECT id FROM incidents WHERE cle_client = ?`, i.CleClient).Scan(&existant)
+		if err == nil {
+			i.ID = existant
+			return ErrDejaEnregistre
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	}
+
 	var checkoutID any
 	if i.CheckoutID != nil {
 		checkoutID = *i.CheckoutID
 	}
 	res, err := s.DB.Exec(`INSERT INTO incidents
-		(vehicle_id, checkout_id, user_id, type, gravite, description, statut)
-		VALUES (?,?,?,?,?,?,'ouvert')`,
-		i.VehicleID, checkoutID, i.UserID, i.Type, i.Gravite, i.Description)
+		(vehicle_id, checkout_id, user_id, type, gravite, description, statut, cle_client)
+		VALUES (?,?,?,?,?,?,'ouvert',?)`,
+		i.VehicleID, checkoutID, i.UserID, i.Type, i.Gravite, i.Description,
+		nullIfEmpty(i.CleClient))
 	if err != nil {
 		return err
 	}

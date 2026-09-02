@@ -64,6 +64,15 @@ type Checkout struct {
 	CheckRetour string `json:"check_retour"`
 	ClotureID   *int64 `json:"cloture_par,omitempty"`
 
+	// Traçabilité des opérations réalisées sans réseau. StartedAt et EndedAt
+	// portent l'heure déclarée par l'appareil ; EnregistreAt et
+	// RetourEnregistreAt l'heure de réception par le serveur. Un écart entre
+	// les deux est normal après une synchronisation différée, et reste visible.
+	DepartHorsLigne    bool   `json:"depart_hors_ligne"`
+	RetourHorsLigne    bool   `json:"retour_hors_ligne"`
+	EnregistreAt       string `json:"enregistre_at,omitempty"`
+	RetourEnregistreAt string `json:"retour_enregistre_at,omitempty"`
+
 	// Champs joints.
 	VehicleCode string `json:"vehicle_code,omitempty"`
 	UserNom     string `json:"user_nom,omitempty"`
@@ -81,6 +90,7 @@ type Incident struct {
 	Statut      string `json:"statut"`
 	ResoluAt    string `json:"resolu_at,omitempty"`
 	CreatedAt   string `json:"created_at"`
+	CleClient   string `json:"-"` // idempotence des signalements différés
 
 	VehicleCode string `json:"vehicle_code,omitempty"`
 	UserNom     string `json:"user_nom,omitempty"`

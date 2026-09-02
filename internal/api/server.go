@@ -76,6 +76,8 @@ func erreurStore(w http.ResponseWriter, err error) {
 		erreur(w, http.StatusConflict, "Ce véhicule est déjà pris en compte par un autre agent.", "deja_en_service")
 	case errors.Is(err, store.ErrVehiculeIndisponible):
 		erreur(w, http.StatusConflict, err.Error(), "indisponible")
+	case errors.Is(err, store.ErrHorodatageInvalide):
+		erreur(w, http.StatusUnprocessableEntity, majuscule(err.Error()), "horodatage_invalide")
 	case errors.Is(err, store.ErrKMIncoherent):
 		erreur(w, http.StatusUnprocessableEntity, majuscule(err.Error()), "km_incoherent")
 	case estContrainteUnique(err):
@@ -170,6 +172,7 @@ func enTetesSecurite(suivant http.Handler) http.Handler {
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; "+
 				"style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; "+
+				"worker-src 'self'; manifest-src 'self'; "+
 				"frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		h.Set("Permissions-Policy", "camera=(self), geolocation=(), microphone=()")
 		suivant.ServeHTTP(w, r)

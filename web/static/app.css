@@ -312,3 +312,19 @@ textarea { resize: vertical; min-height: 82px; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* --- Bandeau d'état réseau --- */
+
+/* Affiché en tête de chaque écran dès que le réseau manque ou qu'une saisie
+   attend d'être transmise. L'agent doit savoir en permanence si ce qu'il
+   enregistre est bien parti. */
+.bandeau {
+  display: flex; align-items: center; gap: 11px;
+  padding: 12px 14px; border-radius: 10px; margin-bottom: 16px;
+  font-size: .9rem; text-decoration: none;
+}
+.bandeau svg { width: 20px; height: 20px; flex-shrink: 0; }
+.bandeau.hors-ligne { background: var(--gris-fond); color: var(--gris-texte); }
+.bandeau.attente { background: var(--ambre-fond); color: var(--ambre-texte); }
+.bandeau strong { font-weight: 700; }
+.bandeau.refus { background: var(--rouge-fond); color: var(--rouge-texte); }

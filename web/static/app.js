@@ -6,6 +6,10 @@
 
 import { api, session, brancherExpiration, ErreurAPI } from './api.js';
 import {
+  empiler, abandonner, fileEnAttente, nombreEnAttente, synchroniser,
+  memoriserParc, parcMemorise, surChangement, demarrerSynchronisation, nouvelleCle,
+} from './horsligne.js';
+import {
   esc, icones, nombre, dateHeure, dateCourte, euros, badge, message, vide,
   carteVehicule, LIBELLES_STATUT, LIBELLES_INCIDENT, LIBELLES_GRAVITE,
   LIBELLES_ENTRETIEN,
@@ -30,6 +34,7 @@ const routes = [
   [/^\/agents$/, () => vueAgents()],
   [/^\/journal$/, () => vueJournal()],
   [/^\/reglages$/, () => vueReglages()],
+  [/^\/attente$/, () => vueFileAttente()],
 ];
 
 // aller navigue sans rechargement.
@@ -83,7 +88,34 @@ brancherExpiration(() => aller('/connexion', true));
 // --- Gabarit ---------------------------------------------------------------
 
 function poser(html, { nav = true } = {}) {
-  app.innerHTML = (nav ? barreNavigation() : '') + `<div class="page">${html}</div>`;
+  app.innerHTML = (nav ? barreNavigation() : '')
+    + `<div class="page">${bandeauReseau()}${html}</div>`;
+}
+
+// bandeauReseau signale l'absence de connexion et les opérations en attente.
+// L'agent doit savoir en permanence si ce qu'il saisit part vraiment.
+function bandeauReseau() {
+  const file = fileEnAttente();
+  if (navigator.onLine && !file.length) return '';
+
+  if (!navigator.onLine) {
+    return `<div class="bandeau hors-ligne">${icones.horsLigne}
+      <div><strong>Hors ligne</strong> — vos saisies sont enregistrées
+      ${file.length ? `(${file.length} en attente)` : ''} et transmises au retour du réseau.</div></div>`;
+  }
+
+  // En ligne avec des saisies restantes : soit elles attendent leur tour, soit
+  // le serveur les a refusées. Annoncer « transmission en cours » dans le
+  // second cas laisserait croire que la situation va se régler seule.
+  const refusees = file.filter((e) => e.erreur).length;
+  if (refusees) {
+    return `<a class="bandeau refus" href="/attente">${icones.alerte}
+      <div><strong>${refusees} saisie${refusees > 1 ? 's' : ''} refusée${refusees > 1 ? 's' : ''}</strong>
+      — votre intervention est nécessaire.</div></a>`;
+  }
+  return `<a class="bandeau attente" href="/attente">${icones.attente}
+    <div><strong>${file.length} opération${file.length > 1 ? 's' : ''} en attente</strong>
+    — transmission en cours.</div></a>`;
 }
 
 function barreNavigation() {
@@ -215,10 +247,41 @@ let filtreParc = 'tous';
 async function vueAccueil() {
   chargement();
   const u = session.utilisateur();
-  const [stats, moi] = await Promise.all([api.stats(), api.moi()]);
-  const vehicules = await api.vehicules(filtreParc);
 
-  const enMain = moi.checkout_en_cours;
+  let stats;
+  let moi = {};
+  let vehicules;
+  let instantane = null;
+  try {
+    [stats, moi] = await Promise.all([api.stats(), api.moi()]);
+    vehicules = await api.vehicules('tous');
+    memoriserParc(vehicules, stats);
+  } catch (err) {
+    // Hors ligne : on affiche le dernier état connu plutôt qu'un écran vide.
+    // Toute autre erreur remonte normalement.
+    if (!(err instanceof ErreurAPI) || err.statut !== 0) throw err;
+    instantane = parcMemorise();
+    if (!instantane) {
+      poser(message('erreur',
+        "Vous êtes hors ligne et aucune donnée n'a encore été enregistrée sur cet appareil. "
+        + "Connectez-vous une fois au réseau pour pouvoir travailler ensuite sans."));
+      return;
+    }
+    stats = instantane.stats;
+    vehicules = instantane.vehicules;
+  }
+  if (filtreParc !== 'tous') {
+    vehicules = vehicules.filter((v) => v.statut === filtreParc);
+  }
+
+  const vieilleteInstantane = instantane
+    ? message('info', `Données du ${dateHeure(instantane.date)}, dernière synchronisation réussie.`)
+    : '';
+
+  // Hors ligne, /moi est injoignable : le véhicule détenu se retrouve dans
+  // l'instantané, à partir de la sortie ouverte au nom de l'agent.
+  const enMain = moi.checkout_en_cours
+    || vehicules.find((v) => v.checkout_en_cours?.user_id === u.id)?.checkout_en_cours;
   const banniere = enMain ? `
     <div class="carte" style="border-color:var(--marine)">
       <div class="entre-deux" style="margin-bottom:12px">
@@ -249,6 +312,7 @@ async function vueAccueil() {
       <p class="sous-titre">Bonjour ${esc(u.prenom)} ${esc(u.nom)} — gérez vos véhicules de patrouille</p>
     </header>
     <div id="zone-message"></div>
+    ${vieilleteInstantane}
     ${banniere}
     <div class="stats">
       ${tuile('', icones.vehicule, 'Total', stats.total, 'tous')}
@@ -322,9 +386,30 @@ function releverControle(form, prefixe) {
   return etat;
 }
 
+// vehiculeAffichable charge une fiche, en retombant sur l'instantané local
+// lorsque le réseau manque. Sans ce repli, un agent hors ligne ne pourrait même
+// pas ouvrir le formulaire de prise en compte.
+async function vehiculeAffichable(id) {
+  try {
+    const d = await api.vehicule(id);
+    return { vehicule: d.vehicule, complet: d, horsLigne: false };
+  } catch (err) {
+    if (!(err instanceof ErreurAPI) || err.statut !== 0) throw err;
+    const v = parcMemorise()?.vehicules.find((x) => x.id === id);
+    if (!v) return null;
+    return { vehicule: v, complet: { vehicule: v }, horsLigne: true };
+  }
+}
+
 async function vuePriseEnCompte(vehiculeId) {
   chargement();
-  const { vehicule: v } = await api.vehicule(vehiculeId);
+  const charge = await vehiculeAffichable(vehiculeId);
+  if (!charge) {
+    poser(retour('/') + message('erreur',
+      "Ce véhicule n'est pas connu de cet appareil et le réseau est indisponible."));
+    return;
+  }
+  const v = charge.vehicule;
 
   if (v.statut !== 'disponible') {
     poser(retour('/') + message('erreur',
@@ -378,19 +463,26 @@ async function vuePriseEnCompte(vehiculeId) {
 }
 
 async function envoyerPrise(form, v, force) {
+  const donnees = {
+    vehicule_id: v.id,
+    km: Number(form.km.value),
+    motif: form.motif.value.trim(),
+    notes: form.notes.value.trim(),
+    check: releverControle(form, 'depart'),
+    force,
+  };
+
   try {
-    const c = await api.prendreEnCompte({
-      vehicule_id: v.id,
-      km: Number(form.km.value),
-      motif: form.motif.value.trim(),
-      notes: form.notes.value.trim(),
-      check: releverControle(form, 'depart'),
-      force,
-    });
+    const c = await api.prendreEnCompte({ ...donnees, cle_client: nouvelleCle() });
     await aller('/');
     poserMessage('succes',
       `${c.vehicle_code} pris en compte à ${nombre(c.km_start)} km. Bonne patrouille.`);
   } catch (err) {
+    // Réseau absent : la sortie est enregistrée sur l'appareil et transmise
+    // plus tard. Un agent en sous-sol ne doit pas être empêché de partir.
+    if (err instanceof ErreurAPI && err.statut === 0) {
+      return misEnAttentePrise(donnees, v);
+    }
     // Le serveur refuse un écart de kilométrage aberrant. C'est presque
     // toujours une faute de frappe, mais parfois le compteur a réellement
     // bougé (véhicule déplacé par le garage) : on laisse confirmer.
@@ -402,12 +494,55 @@ async function envoyerPrise(form, v, force) {
   }
 }
 
+async function misEnAttentePrise(donnees, v) {
+  const maintenant = new Date().toISOString();
+  empiler('prise', {
+    ...donnees,
+    cle_client: nouvelleCle(),
+    date_debut: maintenant,
+    hors_ligne: true,
+  }, `${v.code} pris en compte à ${nombre(donnees.km)} km`);
+
+  // L'instantané local reflète la sortie : sans cela, l'écran d'accueil
+  // proposerait encore le véhicule comme disponible.
+  const parc = parcMemorise();
+  if (parc) {
+    const cible = parc.vehicules.find((x) => x.id === v.id);
+    if (cible) {
+      const u = session.utilisateur();
+      cible.statut = 'en_service';
+      cible.km = donnees.km;
+      cible.checkout_en_cours = {
+        id: 0, user_id: u.id, user_nom: `${u.prenom} ${u.nom}`,
+        started_at: maintenant, km_start: donnees.km, en_attente: true,
+      };
+    }
+    memoriserParc(parc.vehicules, parc.stats);
+  }
+
+  await aller('/');
+  poserMessage('attention',
+    `${v.code} pris en compte hors ligne. L'enregistrement sera transmis au retour du réseau.`);
+}
+
 // --- Restitution -----------------------------------------------------------
 
 async function vueRestitution(checkoutId) {
   chargement();
-  const prises = await api.prises({ statut: 'en_cours', limite: 200 });
-  const c = prises.find((p) => p.id === checkoutId);
+
+  let c;
+  try {
+    const prises = await api.prises({ statut: 'en_cours', limite: 200 });
+    c = prises.find((p) => p.id === checkoutId);
+  } catch (err) {
+    if (!(err instanceof ErreurAPI) || err.statut !== 0) throw err;
+    // Hors ligne : la sortie en cours figure dans l'instantané du parc.
+    const parc = parcMemorise();
+    c = parc?.vehicules
+      .map((v) => v.checkout_en_cours && { ...v.checkout_en_cours, vehicle_id: v.id, vehicle_code: v.code })
+      .find((x) => x && x.id === checkoutId);
+  }
+
   if (!c) {
     poser(retour('/') + message('erreur',
       "Cette prise en compte est introuvable ou déjà clôturée."));
@@ -520,24 +655,62 @@ async function envoyerRetour(form, c, force) {
     });
   }
 
+  const corps = {
+    km: Number(form.km.value),
+    notes: form.notes.value.trim(),
+    check: releverControle(form, 'retour'),
+    incidents,
+    force,
+  };
+
+  // Une sortie encore en attente de transmission n'a pas d'identifiant côté
+  // serveur : impossible de la clôturer tant qu'elle n'est pas partie.
+  if (!c.id) {
+    poserMessage('erreur',
+      "La prise en compte de ce véhicule n'a pas encore été transmise. "
+      + "Reconnectez-vous au réseau avant de le restituer.");
+    return;
+  }
+
   try {
-    const fin = await api.restituer(c.id, {
-      km: Number(form.km.value),
-      notes: form.notes.value.trim(),
-      check: releverControle(form, 'retour'),
-      incidents,
-      force,
-    });
+    const fin = await api.restituer(c.id, { ...corps, cle_client: nouvelleCle() });
     await aller('/');
     poserMessage('succes',
       `${fin.vehicle_code} restitué — ${nombre(fin.distance_km)} km parcourus.`);
   } catch (err) {
+    if (err instanceof ErreurAPI && err.statut === 0) {
+      return misEnAttenteRetour(corps, c);
+    }
     if (err.code === 'km_incoherent' && !force
         && confirm(`${err.message}\n\nConfirmez-vous cette valeur ?`)) {
       return envoyerRetour(form, c, true);
     }
     poserMessage('erreur', err.message);
   }
+}
+
+async function misEnAttenteRetour(corps, c) {
+  const maintenant = new Date().toISOString();
+  empiler('restitution', {
+    checkout_id: c.id,
+    corps: { ...corps, cle_client: nouvelleCle(), date_retour: maintenant, hors_ligne: true },
+  }, `${c.vehicle_code} restitué à ${nombre(corps.km)} km`);
+
+  const parc = parcMemorise();
+  if (parc) {
+    const cible = parc.vehicules.find((x) => x.id === c.vehicle_id);
+    if (cible) {
+      cible.statut = corps.incidents.some((i) => i.gravite === 'immobilisant')
+        ? 'maintenance' : 'disponible';
+      cible.km = corps.km;
+      delete cible.checkout_en_cours;
+    }
+    memoriserParc(parc.vehicules, parc.stats);
+  }
+
+  await aller('/');
+  poserMessage('attention',
+    `${c.vehicle_code} restitué hors ligne. L'enregistrement sera transmis au retour du réseau.`);
 }
 
 // --- Scan du QR code -------------------------------------------------------
@@ -664,10 +837,18 @@ async function ouvrirDepuisQR(valeur) {
 
 async function vueFicheVehicule(id) {
   chargement();
-  const d = await api.vehicule(id);
-  const v = d.vehicule;
-  const enCours = d.checkout_en_cours;
-  const chef = session.peut('chef');
+  const charge = await vehiculeAffichable(id);
+  if (!charge) {
+    poser(retour('/') + message('erreur',
+      "Ce véhicule n'est pas connu de cet appareil et le réseau est indisponible."));
+    return;
+  }
+  const d = charge.complet;
+  const v = charge.vehicule;
+  const enCours = d.checkout_en_cours || v.checkout_en_cours;
+  // Hors ligne, seules les caractéristiques mémorisées sont disponibles :
+  // l'historique, les incidents et les entretiens exigent le serveur.
+  const chef = session.peut('chef') && !charge.horsLigne;
 
   const ligne = (cle, val) =>
     `<div class="champ-lecture"><div class="cle">${esc(cle)}</div><div class="val">${val}</div></div>`;
@@ -1314,6 +1495,68 @@ async function vueJournal() {
     </div>`);
 }
 
+// --- File d'attente ---------------------------------------------------------
+
+const LIBELLES_OPERATION = {
+  prise: 'Prise en compte', restitution: 'Restitution', incident: 'Signalement',
+};
+
+async function vueFileAttente() {
+  const file = fileEnAttente();
+
+  poser(`
+    ${retour('/', 'Retour au tableau de bord')}
+    <header class="entete">
+      <h1>Opérations en attente</h1>
+      <p class="sous-titre">Saisies enregistrées sur cet appareil, pas encore transmises au serveur</p>
+    </header>
+    <div id="zone-message"></div>
+    ${file.length ? `
+      <button class="btn" data-action="synchroniser" style="margin-bottom:16px">
+        Transmettre maintenant</button>
+      ${file.map((e) => `
+        <article class="carte">
+          <div class="entre-deux" style="margin-bottom:8px">
+            <div class="pile">
+              <strong>${esc(e.resume)}</strong>
+              <span class="discret">${esc(LIBELLES_OPERATION[e.operation] || e.operation)}
+                — saisi le ${dateHeure(e.date)}</span>
+            </div>
+          </div>
+          ${e.erreur ? `
+            ${message('erreur', e.erreur)}
+            <p class="discret" style="margin-bottom:10px">Le serveur a refusé cette opération.
+              Réessayer ne changera rien : abandonnez-la puis ressaisissez-la si besoin.</p>
+            <button class="btn danger compact" data-action="abandonner" data-cle="${esc(e.cle)}">
+              Abandonner cette saisie</button>` : `
+            <p class="discret">En attente du réseau.</p>`}
+        </article>`).join('')}`
+      : vide("Aucune opération en attente. Tout a été transmis.", icones.attente)}`);
+
+  surClic(async (action, data, e, cible) => {
+    if (action === 'synchroniser') {
+      await enAttente(cible, async () => {
+        const bilan = await synchroniser();
+        await vueFileAttente();
+        if (bilan.transmises) {
+          poserMessage('succes',
+            `${bilan.transmises} opération${bilan.transmises > 1 ? 's' : ''} transmise${bilan.transmises > 1 ? 's' : ''}.`);
+        } else if (!navigator.onLine) {
+          poserMessage('attention', "Toujours hors ligne. Les saisies restent enregistrées.");
+        } else if (bilan.echecs) {
+          poserMessage('erreur',
+            `${bilan.echecs} opération${bilan.echecs > 1 ? 's' : ''} refusée${bilan.echecs > 1 ? 's' : ''} par le serveur.`);
+        }
+      });
+    } else if (action === 'abandonner') {
+      if (!confirm("Abandonner définitivement cette saisie ? Elle ne sera pas enregistrée.")) return;
+      abandonner(data.cle);
+      await vueFileAttente();
+      poserMessage('info', 'Saisie abandonnée.');
+    }
+  });
+}
+
 // --- Réglages --------------------------------------------------------------
 
 async function vueReglages() {
@@ -1394,8 +1637,51 @@ async function vueReglages() {
 
 // --- Démarrage -------------------------------------------------------------
 
+// Le service worker met l'interface en cache : sans lui, l'application ne se
+// chargerait tout simplement pas hors réseau. Son absence n'est pas bloquante
+// (navigation privée, contexte non sécurisé) : seul le hors-ligne est perdu.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch((err) => {
+    console.warn('Mode hors ligne indisponible :', err.message);
+  });
+}
+
+// Le bandeau d'état doit suivre les changements de connectivité et de file.
+// Un simple re-rendu de l'écran courant suffit à le remettre à jour.
+window.addEventListener('online', () => rendre());
+window.addEventListener('offline', () => rendre());
+surChangement(() => {
+  const bandeau = app.querySelector('.bandeau');
+  const page = app.querySelector('.page');
+  if (!page) return;
+  const html = bandeauReseau();
+  if (bandeau) bandeau.outerHTML = html;
+  else if (html) page.insertAdjacentHTML('afterbegin', html);
+});
+
+if (session.connecte()) {
+  demarrerSynchronisation(async (bilan) => {
+    // Le rendu vient d'abord : il reconstruit la page, et effacerait un
+    // message posé avant lui.
+    await rendre();
+    if (bilan.transmises) {
+      const n = bilan.transmises;
+      poserMessage('succes', n > 1
+        ? `${n} opérations enregistrées hors ligne ont été transmises.`
+        : `L'opération enregistrée hors ligne a été transmise.`);
+    }
+    if (bilan.echecs) {
+      const n = bilan.echecs;
+      poserMessage('erreur', n > 1
+        ? `${n} opérations ont été refusées par le serveur. Consultez la file d'attente.`
+        : `Une opération a été refusée par le serveur. Consultez la file d'attente.`);
+    }
+  });
+}
+
 // Le profil est rafraîchi au chargement : un rôle modifié ou un compte
-// désactivé côté serveur doit se refléter sans attendre la reconnexion.
+// désactivé côté serveur doit se refléter sans attendre la reconnexion. Hors
+// ligne, l'échec est sans conséquence : le profil mémorisé fait foi.
 if (session.connecte()) {
   api.moi()
     .then((rep) => session.majUtilisateur(rep.user))

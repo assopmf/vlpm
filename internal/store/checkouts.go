@@ -10,9 +10,15 @@ import (
 )
 
 var (
+	// ErrDejaEnregistre signale un rejeu : l'opération avait déjà été reçue.
+	// L'enregistrement existant est renvoyé avec cette erreur, ce qui permet à
+	// l'appelant de répondre un succès sans rien dupliquer.
+	ErrDejaEnregistre = errors.New("opération déjà enregistrée")
+
 	ErrVehiculeIndisponible = errors.New("véhicule indisponible")
 	ErrDejaEnService        = errors.New("véhicule déjà pris en compte")
 	ErrKMIncoherent         = errors.New("kilométrage incohérent")
+	ErrHorodatageInvalide   = errors.New("horodatage invalide")
 )
 
 // KMDeltaMax borne le nombre de kilomètres acceptés sans confirmation sur une
@@ -42,14 +48,16 @@ func FmtKM(n int64) string {
 }
 
 const checkoutCols = `c.id, c.vehicle_id, c.user_id, c.statut, c.started_at, c.km_start,
-	c.ended_at, c.km_end, c.motif, c.notes_depart, c.notes_retour, c.check_depart, c.check_retour, c.cloture_par`
+	c.ended_at, c.km_end, c.motif, c.notes_depart, c.notes_retour, c.check_depart, c.check_retour,
+	c.cloture_par, c.depart_hors_ligne, c.retour_hors_ligne, c.created_at, c.retour_enregistre_at`
 
 func scanCheckout(row interface{ Scan(...any) error }, joint bool) (*Checkout, error) {
 	var c Checkout
-	var endedAt sql.NullString
+	var endedAt, retourEnregistre sql.NullString
 	var kmEnd, cloture sql.NullInt64
 	dest := []any{&c.ID, &c.VehicleID, &c.UserID, &c.Statut, &c.StartedAt, &c.KMStart,
-		&endedAt, &kmEnd, &c.Motif, &c.NotesDepart, &c.NotesRetour, &c.CheckDepart, &c.CheckRetour, &cloture}
+		&endedAt, &kmEnd, &c.Motif, &c.NotesDepart, &c.NotesRetour, &c.CheckDepart, &c.CheckRetour,
+		&cloture, &c.DepartHorsLigne, &c.RetourHorsLigne, &c.EnregistreAt, &retourEnregistre}
 	if joint {
 		dest = append(dest, &c.VehicleCode, &c.UserNom)
 	}
@@ -61,6 +69,7 @@ func scanCheckout(row interface{ Scan(...any) error }, joint bool) (*Checkout, e
 		return nil, err
 	}
 	c.EndedAt = ns(endedAt)
+	c.RetourEnregistreAt = ns(retourEnregistre)
 	c.KMEnd = ni(kmEnd)
 	c.ClotureID = ni(cloture)
 	if c.KMEnd != nil {
@@ -172,11 +181,29 @@ type PriseEnCompte struct {
 	Notes     string
 	Check     string // JSON de l'état des lieux
 	Force     bool   // passe outre l'alerte de kilométrage incohérent
+
+	// Renseignés lorsque l'opération a été saisie sans réseau puis transmise
+	// après coup. CleClient rend le rejeu inoffensif ; DebutDeclare porte
+	// l'heure réelle de la sortie, telle que l'appareil l'a relevée.
+	CleClient    string
+	DebutDeclare time.Time
+	HorsLigne    bool
 }
 
 // PrendreEnCompte confie un véhicule à un agent. L'opération est atomique : le
 // véhicule passe "en service" et son compteur est recalé sur le km saisi.
 func (s *Store) PrendreEnCompte(p PriseEnCompte) (*Checkout, error) {
+	// Rejeu d'une opération déjà reçue : on renvoie l'enregistrement existant
+	// plutôt que d'en créer un second. Le cas se produit dès qu'une réponse se
+	// perd sur un réseau mobile instable.
+	if p.CleClient != "" {
+		if c, err := s.checkoutParCle("cle_client", p.CleClient); err == nil {
+			return c, ErrDejaEnregistre
+		} else if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+	}
+
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return nil, err
@@ -212,11 +239,16 @@ func (s *Store) PrendreEnCompte(p PriseEnCompte) (*Checkout, error) {
 	if p.Check == "" {
 		p.Check = "{}"
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	debut, err := horodatageDeclare(p.DebutDeclare)
+	if err != nil {
+		return nil, err
+	}
 	res, err := tx.Exec(`INSERT INTO checkouts
-		(vehicle_id, user_id, statut, started_at, km_start, motif, notes_depart, check_depart)
-		VALUES (?,?,'en_cours',?,?,?,?,?)`,
-		p.VehicleID, p.UserID, now, p.KMStart, p.Motif, p.Notes, p.Check)
+		(vehicle_id, user_id, statut, started_at, km_start, motif, notes_depart, check_depart,
+		 cle_client, depart_hors_ligne)
+		VALUES (?,?,'en_cours',?,?,?,?,?,?,?)`,
+		p.VehicleID, p.UserID, debut, p.KMStart, p.Motif, p.Notes, p.Check,
+		nullIfEmpty(p.CleClient), p.HorsLigne)
 	if err != nil {
 		return nil, err
 	}
@@ -240,10 +272,23 @@ type Restitution struct {
 	Immobilise  bool  // le véhicule part en maintenance au lieu de redevenir disponible
 	ClotureePar int64 // renseigné si un chef clôture à la place de l'agent
 	Force       bool
+
+	// Voir PriseEnCompte : mêmes garanties pour une restitution différée.
+	CleClient     string
+	RetourDeclare time.Time
+	HorsLigne     bool
 }
 
 // Restituer clôt une prise en compte et remet le véhicule dans le parc.
 func (s *Store) Restituer(r Restitution) (*Checkout, error) {
+	if r.CleClient != "" {
+		if c, err := s.checkoutParCle("cle_client_retour", r.CleClient); err == nil {
+			return c, ErrDejaEnregistre
+		} else if !errors.Is(err, ErrNotFound) {
+			return nil, err
+		}
+	}
+
 	tx, err := s.DB.Begin()
 	if err != nil {
 		return nil, err
@@ -275,14 +320,24 @@ func (s *Store) Restituer(r Restitution) (*Checkout, error) {
 	if r.Check == "" {
 		r.Check = "{}"
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
+	retour, err := horodatageDeclare(r.RetourDeclare)
+	if err != nil {
+		return nil, err
+	}
+	// Une restitution ne peut pas précéder la sortie qu'elle clôt, même si
+	// l'horloge de l'appareil qui l'a saisie est déréglée.
+	if retour < debutDe(tx, r.CheckoutID) {
+		retour = time.Now().UTC().Format(time.RFC3339)
+	}
 	var cloture any
 	if r.ClotureePar > 0 {
 		cloture = r.ClotureePar
 	}
 	if _, err := tx.Exec(`UPDATE checkouts SET statut='termine', ended_at=?, km_end=?,
-		notes_retour=?, check_retour=?, cloture_par=? WHERE id=?`,
-		now, r.KMEnd, r.Notes, r.Check, cloture, r.CheckoutID); err != nil {
+		notes_retour=?, check_retour=?, cloture_par=?, cle_client_retour=?,
+		retour_hors_ligne=?, retour_enregistre_at=? WHERE id=?`,
+		retour, r.KMEnd, r.Notes, r.Check, cloture, nullIfEmpty(r.CleClient),
+		r.HorsLigne, time.Now().UTC().Format(time.RFC3339), r.CheckoutID); err != nil {
 		return nil, err
 	}
 
@@ -299,4 +354,59 @@ func (s *Store) Restituer(r Restitution) (*Checkout, error) {
 		return nil, err
 	}
 	return s.CheckoutByID(r.CheckoutID)
+}
+
+// CheckoutParCleClient retrouve une prise en compte déjà reçue. Sert à répondre
+// à un rejeu avant toute autre validation : sans cela, un client qui réessaie
+// se heurterait aux gardes métier (« vous détenez déjà un véhicule ») et
+// resterait bloqué à rejouer une opération pourtant déjà enregistrée.
+func (s *Store) CheckoutParCleClient(cle string) (*Checkout, error) {
+	return s.checkoutParCle("cle_client", cle)
+}
+
+// checkoutParCle retrouve une opération déjà reçue à partir de sa clé client.
+// Le nom de colonne provient exclusivement d'appels internes, jamais d'une
+// entrée utilisateur.
+func (s *Store) checkoutParCle(colonne, cle string) (*Checkout, error) {
+	return scanCheckout(s.DB.QueryRow(
+		`SELECT `+checkoutJoinCols+checkoutJoin+` WHERE c.`+colonne+` = ?`, cle), true)
+}
+
+// EcartHorlogeMax borne la confiance accordée à l'horloge de l'appareil qui a
+// saisi une opération hors ligne.
+const (
+	EcartHorlogeMax = 5 * time.Minute    // tolérance pour une horloge en avance
+	AncienneteMax   = 7 * 24 * time.Hour // au-delà, la saisie est trop vieille
+)
+
+// horodatageDeclare valide l'heure fournie par un appareil et la met en forme.
+// Une date absente donne l'heure du serveur : c'est le cas d'une saisie en
+// ligne, où les deux coïncident de toute façon.
+func horodatageDeclare(t time.Time) (string, error) {
+	maintenant := time.Now().UTC()
+	if t.IsZero() {
+		return maintenant.Format(time.RFC3339), nil
+	}
+	t = t.UTC()
+	if t.After(maintenant.Add(EcartHorlogeMax)) {
+		return "", fmt.Errorf("%w : l'heure déclarée est dans le futur, vérifiez l'horloge de l'appareil",
+			ErrHorodatageInvalide)
+	}
+	if t.Before(maintenant.Add(-AncienneteMax)) {
+		return "", fmt.Errorf("%w : l'opération date de plus de %d jours",
+			ErrHorodatageInvalide, int(AncienneteMax.Hours()/24))
+	}
+	return t.Format(time.RFC3339), nil
+}
+
+// debutDe lit l'heure de sortie d'une prise en compte, dans la transaction en
+// cours. Renvoie une chaîne vide si elle est illisible, ce qui laisse alors la
+// comparaison sans effet.
+func debutDe(tx *sql.Tx, checkoutID int64) string {
+	var debut string
+	if err := tx.QueryRow(`SELECT started_at FROM checkouts WHERE id = ?`, checkoutID).
+		Scan(&debut); err != nil {
+		return ""
+	}
+	return debut
 }

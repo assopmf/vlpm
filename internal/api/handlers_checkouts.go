@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -41,6 +42,11 @@ type requetePrise struct {
 	Notes      string          `json:"notes"`
 	Check      json.RawMessage `json:"check"`
 	Force      bool            `json:"force"`
+
+	// Renseignés par un client qui rejoue une saisie faite sans réseau.
+	CleClient string `json:"cle_client"`
+	DateDebut string `json:"date_debut"`
+	HorsLigne bool   `json:"hors_ligne"`
 }
 
 // postPriseEnCompte : un agent prend un véhicule, par scan du QR ou depuis la liste.
@@ -49,6 +55,18 @@ func (s *Server) postPriseEnCompte(w http.ResponseWriter, r *http.Request) {
 	var req requetePrise
 	if !decoderJSON(w, r, &req) {
 		return
+	}
+
+	// Le rejeu se traite avant toute validation métier : l'opération a déjà
+	// abouti, les gardes qui suivent n'ont pas à s'y appliquer.
+	if cle := strings.TrimSpace(req.CleClient); cle != "" {
+		if dejaVu, err := s.st.CheckoutParCleClient(cle); err == nil {
+			ecrireJSON(w, http.StatusOK, dejaVu)
+			return
+		} else if !errors.Is(err, store.ErrNotFound) {
+			erreurStore(w, err)
+			return
+		}
 	}
 
 	vehiculeID := req.VehiculeID
@@ -82,10 +100,23 @@ func (s *Server) postPriseEnCompte(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	debut, err := horodatage(req.DateDebut)
+	if err != nil {
+		erreur(w, http.StatusBadRequest, err.Error(), "date_invalide")
+		return
+	}
+
 	c, err := s.st.PrendreEnCompte(store.PriseEnCompte{
 		VehicleID: vehiculeID, UserID: u.ID, KMStart: *req.KM,
 		Motif: req.Motif, Notes: req.Notes, Check: jsonOuVide(req.Check), Force: req.Force,
+		CleClient: strings.TrimSpace(req.CleClient), DebutDeclare: debut, HorsLigne: req.HorsLigne,
 	})
+	if errors.Is(err, store.ErrDejaEnregistre) {
+		// Rejeu : l'opération avait déjà abouti. On répond un succès pour que
+		// le client la retire de sa file au lieu de réessayer indéfiniment.
+		ecrireJSON(w, http.StatusOK, c)
+		return
+	}
 	if err != nil {
 		erreurStore(w, err)
 		return
@@ -101,6 +132,9 @@ type requeteRestitution struct {
 	Check      json.RawMessage `json:"check"`
 	Immobilise bool            `json:"immobilise"`
 	Force      bool            `json:"force"`
+	CleClient  string          `json:"cle_client"`
+	DateRetour string          `json:"date_retour"`
+	HorsLigne  bool            `json:"hors_ligne"`
 	Incidents  []struct {
 		Type        string `json:"type"`
 		Gravite     string `json:"gravite"`
@@ -150,10 +184,21 @@ func (s *Server) postRestitution(w http.ResponseWriter, r *http.Request) {
 	if existant.UserID != u.ID {
 		clotureePar = u.ID
 	}
+	retour, err := horodatage(req.DateRetour)
+	if err != nil {
+		erreur(w, http.StatusBadRequest, err.Error(), "date_invalide")
+		return
+	}
+
 	c, err := s.st.Restituer(store.Restitution{
 		CheckoutID: id, KMEnd: *req.KM, Notes: req.Notes, Check: jsonOuVide(req.Check),
 		Immobilise: immobilise, ClotureePar: clotureePar, Force: req.Force,
+		CleClient: strings.TrimSpace(req.CleClient), RetourDeclare: retour, HorsLigne: req.HorsLigne,
 	})
+	if errors.Is(err, store.ErrDejaEnregistre) {
+		ecrireJSON(w, http.StatusOK, c)
+		return
+	}
 	if err != nil {
 		erreurStore(w, err)
 		return
@@ -201,6 +246,7 @@ type requeteIncident struct {
 	Type        string `json:"type"`
 	Gravite     string `json:"gravite"`
 	Description string `json:"description"`
+	CleClient   string `json:"cle_client"`
 }
 
 func (s *Server) postIncidents(w http.ResponseWriter, r *http.Request) {
@@ -216,9 +262,12 @@ func (s *Server) postIncidents(w http.ResponseWriter, r *http.Request) {
 	i := &store.Incident{
 		VehicleID: req.VehiculeID, UserID: u.ID,
 		Type: defaut(req.Type, "autre"), Gravite: defaut(req.Gravite, "mineur"),
-		Description: req.Description,
+		Description: req.Description, CleClient: strings.TrimSpace(req.CleClient),
 	}
-	if err := s.st.CreateIncident(i); err != nil {
+	if err := s.st.CreateIncident(i); errors.Is(err, store.ErrDejaEnregistre) {
+		ecrireJSON(w, http.StatusOK, i)
+		return
+	} else if err != nil {
 		erreurStore(w, err)
 		return
 	}
@@ -360,4 +409,18 @@ func defaut(v, def string) string {
 		return def
 	}
 	return v
+}
+
+// horodatage lit une date RFC 3339 fournie par un client hors ligne. Une valeur
+// absente laisse le serveur employer sa propre horloge.
+func horodatage(v string) (time.Time, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("Date « %s » illisible : le format attendu est 2026-09-02T14:07:00Z.", v)
+	}
+	return t, nil
 }

@@ -161,6 +161,34 @@ coller dans l'habitacle. Le QR encode un jeton opaque, jamais le numéro
 d'immatriculation ni l'identifiant interne : une étiquette photographiée
 n'apprend rien à qui n'a pas de compte.
 
+### Travailler sans réseau
+
+Les parkings souterrains et les zones blanches sont la règle, pas l'exception.
+L'application reste utilisable sans connexion :
+
+- L'interface se charge depuis le cache du navigateur.
+- Le dernier état connu du parc reste consultable, daté à l'écran.
+- Une prise en compte ou une restitution saisie hors ligne est enregistrée sur
+  l'appareil, puis transmise automatiquement au retour du réseau.
+
+**L'heure retenue est celle de la saisie, pas celle de la synchronisation.** Une
+sortie faite à 8 h et transmise à midi figure bien à 8 h dans la main courante.
+L'heure de réception par le serveur est conservée à côté : l'écart entre les
+deux reste visible, l'horloge d'un téléphone n'étant pas une source de
+confiance. Une date incohérente — dans le futur, ou vieille de plus de sept
+jours — est refusée.
+
+Chaque opération porte une clé unique : si le réseau coupe entre la requête et
+sa réponse, l'appareil réessaie sans créer de doublon.
+
+En cas de conflit — deux agents ayant pris le même véhicule chacun de leur côté
+— la saisie n'est jamais perdue silencieusement. Elle reste dans la file avec le
+motif du refus, à l'écran « Opérations en attente », et l'agent décide.
+
+Pour un usage quotidien, l'application s'ajoute à l'écran d'accueil du téléphone
+(« Ajouter à l'écran d'accueil » depuis le navigateur). Le mode hors ligne exige
+**HTTPS**, comme le scan des QR codes.
+
 ### Contrôles de cohérence
 
 Le kilométrage ne peut pas reculer, et un écart de plus de 1 500 km sur une
@@ -212,7 +240,7 @@ cmd/vlpm/          point d'entrée
 internal/store/    schéma SQLite, requêtes, règles métier
 internal/api/      routes HTTP et validation des entrées
 internal/auth/     mots de passe et sessions
-web/static/        interface (HTML, CSS, JS)
+web/static/        interface (HTML, CSS, JS, service worker)
 ```
 
 Les données transitent par l'API en français (`vehicules`, `prises`, `km`) pour
@@ -246,8 +274,10 @@ de la base ne permet pas de rejouer les sessions ouvertes.
 - **Image Docker non vérifiée.** Le `Dockerfile` est écrit mais n'a pas pu être
   construit sur la machine de développement. À valider avant tout déploiement
   par ce biais.
-- **Pas de mode hors ligne.** Une prise en compte dans un parking souterrain
-  sans réseau échouera. C'est le manque le plus gênant à l'usage.
+- **Service worker non vérifié.** La mise en cache de l'interface a été écrite
+  mais n'a pas pu être testée : le navigateur d'intégration utilisé pendant le
+  développement refuse les service workers. La file d'attente hors ligne, elle,
+  est testée et fonctionne. À valider sur un vrai téléphone avant déploiement.
 - **Pas de photos.** On ne peut pas joindre de cliché à un constat de dommage.
 - **Pas de notifications** d'échéance de contrôle technique ou de révision : les
   dates sont enregistrées et affichées, mais rien ne les rappelle.

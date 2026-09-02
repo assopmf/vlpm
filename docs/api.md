@@ -60,6 +60,8 @@ identifiant stable, destiné au traitement programmatique.
 | `doublon` | 409 | Code véhicule ou matricule déjà utilisé |
 | `statut_pilote` | 409 | Statut « en service » non modifiable à la main |
 | `km_incoherent` | 422 | Kilométrage refusé (voir plus bas) |
+| `horodatage_invalide` | 422 | Date déclarée dans le futur ou trop ancienne |
+| `date_invalide` | 400 | Date illisible (format RFC 3339 attendu) |
 | `mot_de_passe_faible` | 422 | Moins de 10 caractères, ou sans chiffre |
 | `trop_de_tentatives` | 429 | Trop d'échecs de connexion |
 
@@ -172,6 +174,75 @@ Deux règles, à l'origine des réponses `422 km_incoherent` :
 La seconde règle attrape les fautes de frappe sans bloquer les cas réels — un
 véhicule ramené du garage avec plusieurs milliers de kilomètres de plus.
 
+## Opérations différées
+
+Une application mobile qui accepte des saisies sans réseau doit les rejouer
+ensuite. Trois champs facultatifs, communs aux prises en compte, aux
+restitutions et aux incidents, rendent ce rejeu sûr.
+
+| Champ | Rôle |
+|---|---|
+| `cle_client` | Identifiant unique de l'opération, généré par le client (un UUID convient) |
+| `date_debut` / `date_retour` | Heure réelle de l'opération, au format RFC 3339 |
+| `hors_ligne` | Marque l'enregistrement comme saisi sans réseau |
+
+### Rejeu sans doublon
+
+Une requête peut aboutir alors que sa réponse se perd. Le client réessaie ;
+sans précaution, une seconde sortie serait créée.
+
+Une `cle_client` déjà reçue fait renvoyer l'enregistrement existant avec un
+**`200 OK`** au lieu d'un `201 Created`. Le client traite les deux comme un
+succès et retire l'opération de sa file. Rejouer est donc sans danger, et le
+nombre de tentatives est sans importance.
+
+Ce contrôle intervient **avant toute validation métier** : un rejeu ne se heurte
+pas aux règles qui auraient refusé une nouvelle opération (« vous détenez déjà
+un véhicule »), sinon le client resterait bloqué à rejouer indéfiniment.
+
+### Heure déclarée et heure de réception
+
+Sans `date_debut`, le serveur emploie sa propre horloge — c'est le cas d'une
+saisie en ligne, où les deux coïncident.
+
+Avec `date_debut`, l'enregistrement conserve les deux :
+
+| Champ renvoyé | Signification |
+|---|---|
+| `started_at` / `ended_at` | Heure déclarée par l'appareil : celle de la sortie réelle |
+| `enregistre_at` / `retour_enregistre_at` | Heure de réception par le serveur |
+| `depart_hors_ligne` / `retour_hors_ligne` | Saisie effectuée sans réseau |
+
+Une main courante qui décalerait les sorties de plusieurs heures n'aurait aucune
+valeur : c'est l'heure déclarée qui fait foi à l'usage. L'horloge d'un téléphone
+n'étant pas une source de confiance, l'heure de réception reste enregistrée à
+côté, et l'écart est visible.
+
+Deux bornes encadrent la date déclarée, sous peine de `422 horodatage_invalide` :
+
+- pas plus de 5 minutes dans le futur (tolérance de dérive d'horloge) ;
+- pas plus de 7 jours dans le passé.
+
+Une restitution antérieure à la sortie qu'elle clôt est ramenée à l'heure du
+serveur plutôt que refusée : l'opération est valide, seule l'horloge est fausse.
+
+### Conflits
+
+Le rejeu peut se heurter à un refus définitif : véhicule pris entre-temps par un
+collègue (`409 deja_en_service`), kilométrage devenu incohérent
+(`422 km_incoherent`). Réessayer n'y changera rien.
+
+Un client doit distinguer trois situations :
+
+| Situation | Conduite à tenir |
+|---|---|
+| Échec réseau (aucune réponse) | Garder l'opération, réessayer plus tard |
+| `200` ou `201` | Retirer l'opération de la file |
+| Toute autre réponse du serveur | Cesser de réessayer, présenter le motif à l'agent |
+
+Une opération refusée ne doit jamais être supprimée en silence : l'agent a
+physiquement pris le véhicule, et lui seul peut trancher.
+
 ## Incidents
 
 | Route | Rôle | Description |
@@ -243,6 +314,6 @@ compte.
 - **Scan** : décoder le QR localement, puis appeler `GET /scan/{token}`. Le QR
   contient soit une URL complète, soit `vlpm:<jeton>` si le serveur n'a pas
   d'URL publique configurée — ne garder que le dernier segment.
-- **Hors ligne** : l'API n'offre aucun mécanisme de synchronisation différée. Une
-  application mobile qui en a besoin devra mettre en file les prises en compte
-  et gérer elle-même les conflits au retour du réseau.
+- **Hors ligne** : voir « Opérations différées ». Joindre une `cle_client` à
+  chaque opération, mémoriser l'heure réelle de la saisie, et traiter les refus
+  du serveur comme définitifs.

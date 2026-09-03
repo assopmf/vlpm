@@ -271,6 +271,13 @@ Chaque option a son équivalent en variable d'environnement.
 | `--derriere-proxy` | `VLPM_DERRIERE_PROXY` | `false` | Fait confiance à `X-Forwarded-For` |
 | `--dev` | `VLPM_DEV` | `false` | Sert l'interface depuis le disque |
 | `--sauvegardes` | `VLPM_SAUVEGARDES` | `14` | Sauvegardes quotidiennes conservées (`0` toutes, `-1` désactive) |
+| `--smtp-hote` | `VLPM_SMTP_HOTE` | — | Relais SMTP (vide = pas d'envoi) |
+| `--smtp-port` | `VLPM_SMTP_PORT` | `587` | Port SMTP |
+| `--smtp-utilisateur` | `VLPM_SMTP_UTILISATEUR` | — | Identifiant SMTP (vide pour un relais interne) |
+| `--smtp-mot-de-passe` | `VLPM_SMTP_MOT_DE_PASSE` | — | Mot de passe SMTP |
+| `--smtp-expediteur` | `VLPM_SMTP_EXPEDITEUR` | — | Adresse d'expédition (obligatoire si un relais est configuré) |
+| `--smtp-tls-implicite` | `VLPM_SMTP_TLS_IMPLICITE` | `false` | Chiffrement d'emblée (port 465) |
+| `--nom-service` | `VLPM_NOM_SERVICE` | — | Nom du service, affiché comme expéditeur |
 
 Sous-commandes : `vlpm sauvegarder`, `vlpm reinitialiser-admin`, `vlpm aide`.
 
@@ -346,6 +353,36 @@ véhicule. Sans date ni seuil renseigné, rien n'est signalé.
 
 Pour ajuster ces seuils, modifiez `PreavisCTJours` et `PreavisRevisionKM` dans
 [`internal/store/alertes.go`](internal/store/alertes.go).
+
+#### Recevoir le relevé par courriel
+
+Un service qui n'ouvre pas l'application ne verrait rien passer. Un relevé
+périodique peut donc être expédié aux responsables.
+
+Le relais SMTP se configure **au démarrage du serveur**, jamais depuis
+l'interface : un mot de passe saisi dans l'application serait stocké en clair
+dans la base, alors que les mots de passe des agents n'y sont que sous forme de
+condensat. Cette asymétrie serait un piège.
+
+```bash
+vlpm --smtp-hote smtp.ville-exemple.fr \
+     --smtp-expediteur vlpm@ville-exemple.fr \
+     --nom-service "Police municipale de Ville-Exemple"
+```
+
+Un relais interne sans authentification, cas fréquent en mairie, fonctionne
+tel quel : n'indiquez ni identifiant ni mot de passe. Avec authentification,
+préférez les variables d'environnement pour le mot de passe
+(`VLPM_SMTP_MOT_DE_PASSE`), afin qu'il n'apparaisse pas dans la liste des
+processus. STARTTLS est utilisé dès que le relais l'annonce ; ajoutez
+`--smtp-tls-implicite` pour un port 465.
+
+La fréquence et les destinataires se règlent ensuite dans **Réglages → Relevé
+d'échéances** : ce sont des choix de service, pas d'installation. Les chefs et
+administrateurs dont le courriel est renseigné sont destinataires d'office.
+
+**Aucun message n'est envoyé quand il n'y a rien à signaler.** Un relevé vide
+reçu chaque semaine finit par ne plus être lu, et emporte les autres avec lui.
 
 ### Étiquettes QR
 
@@ -479,9 +516,6 @@ annexe du texte.
   mais n'a pas pu être testée : le navigateur d'intégration utilisé pendant le
   développement refuse les service workers. La file d'attente hors ligne, elle,
   est testée et fonctionne. À valider sur un vrai téléphone avant déploiement.
-- **Les échéances ne sont pas notifiées hors de l'application.** Elles sont
-  signalées à l'ouverture, mais aucun courriel ni message n'est envoyé : un
-  service qui n'ouvre pas l'application ne verra rien.
 - **Obligations RGPD à traiter avant déploiement.** L'application trace
   nominativement l'activité d'agents publics : inscription au registre des
   traitements, information des agents, et consultation des instances

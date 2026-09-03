@@ -15,19 +15,23 @@ import (
 
 	"github.com/assopmf/vlpm/internal/auth"
 	"github.com/assopmf/vlpm/internal/config"
+	"github.com/assopmf/vlpm/internal/courriel"
 	"github.com/assopmf/vlpm/internal/store"
 )
 
 type Server struct {
-	cfg    config.Config
-	st     *store.Store
-	auth   *auth.Service
-	log    *slog.Logger
-	limite *limiteur
+	cfg      config.Config
+	st       *store.Store
+	auth     *auth.Service
+	log      *slog.Logger
+	limite   *limiteur
+	courriel courriel.Expediteur // nil si aucun relais n'est configuré
 }
 
-func New(cfg config.Config, st *store.Store, a *auth.Service, log *slog.Logger) *Server {
-	return &Server{cfg: cfg, st: st, auth: a, log: log, limite: nouveauLimiteur()}
+func New(cfg config.Config, st *store.Store, a *auth.Service, log *slog.Logger,
+	exp courriel.Expediteur) *Server {
+	return &Server{cfg: cfg, st: st, auth: a, log: log,
+		limite: nouveauLimiteur(), courriel: exp}
 }
 
 // contexte de requête : l'utilisateur authentifié est passé via le contexte.

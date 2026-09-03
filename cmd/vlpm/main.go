@@ -20,6 +20,7 @@ import (
 	"github.com/assopmf/vlpm/internal/api"
 	"github.com/assopmf/vlpm/internal/auth"
 	"github.com/assopmf/vlpm/internal/config"
+	"github.com/assopmf/vlpm/internal/courriel"
 	"github.com/assopmf/vlpm/internal/store"
 )
 
@@ -59,7 +60,20 @@ func run() error {
 		return err
 	}
 
-	srv := api.New(cfg, st, authSvc, log)
+	// Sans relais configuré, l'expéditeur reste nil : l'interface le signale
+	// plutôt que de laisser croire qu'un relevé partira.
+	var expediteur courriel.Expediteur
+	if cfg.SMTPHote != "" {
+		expediteur = courriel.Nouveau(courriel.Config{
+			Hote: cfg.SMTPHote, Port: cfg.SMTPPort,
+			Utilisateur: cfg.SMTPUtilisateur, MotDePasse: cfg.SMTPMotDePasse,
+			Expediteur: cfg.SMTPExpediteur, NomService: cfg.NomService,
+			TLSImplicite: cfg.SMTPTLSImplicite,
+		})
+		log.Info("envoi de courriels actif", "relais", cfg.SMTPHote, "expediteur", cfg.SMTPExpediteur)
+	}
+
+	srv := api.New(cfg, st, authSvc, log, expediteur)
 	httpSrv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           srv.Handler(),
@@ -73,7 +87,7 @@ func run() error {
 	ctx, arreterMenage := context.WithCancel(context.Background())
 	defer arreterMenage()
 	go menage(ctx, authSvc, srv, log)
-	go entretienQuotidien(ctx, st, cfg, log)
+	go entretienQuotidien(ctx, st, cfg, expediteur, log)
 
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
@@ -168,7 +182,8 @@ func balayerPhotos(cfg config.Config, st *store.Store, log *slog.Logger) {
 // enregistrements sont supprimés définitivement. Les deux tâches restent
 // indépendantes — désactiver les sauvegardes ne doit pas désactiver une purge
 // exigée par le RGPD.
-func entretienQuotidien(ctx context.Context, st *store.Store, cfg config.Config, log *slog.Logger) {
+func entretienQuotidien(ctx context.Context, st *store.Store, cfg config.Config,
+	exp courriel.Expediteur, log *slog.Logger) {
 	if cfg.SauvegardesGardees < 0 {
 		log.Info("sauvegarde automatique désactivée")
 	}
@@ -179,6 +194,7 @@ func entretienQuotidien(ctx context.Context, st *store.Store, cfg config.Config,
 		}
 		purgerDonnees(st, log)
 		balayerPhotos(cfg, st, log)
+		envoyerReleve(st, cfg, exp, log)
 	}
 
 	// Un premier passage peu après le démarrage : sur une machine éteinte
@@ -198,6 +214,47 @@ func entretienQuotidien(ctx context.Context, st *store.Store, cfg config.Config,
 			passe()
 		}
 	}
+}
+
+// envoyerReleve expédie le relevé d'échéances si l'un est dû.
+//
+// Aucun message n'est envoyé quand il n'y a rien à signaler : un relevé vide
+// reçu chaque semaine finit dans la corbeille, et emporte les autres avec lui.
+func envoyerReleve(st *store.Store, cfg config.Config, exp courriel.Expediteur, log *slog.Logger) {
+	if exp == nil || !st.DoitEnvoyer(time.Now()) {
+		return
+	}
+	alertes, err := st.Alertes()
+	if err != nil {
+		log.Error("relevé d'échéances : lecture", "erreur", err)
+		return
+	}
+	if len(alertes) == 0 {
+		return
+	}
+	destinataires, err := st.DestinatairesEffectifs()
+	if err != nil {
+		log.Error("relevé d'échéances : destinataires", "erreur", err)
+		return
+	}
+	if len(courriel.AdressesValides(destinataires)) == 0 {
+		return
+	}
+
+	sujet, corps := store.ComposerReleve(cfg.NomService, alertes, cfg.BaseURL)
+	if err := exp.Envoyer(courriel.Message{
+		Destinataires: destinataires, Sujet: sujet, Corps: corps,
+	}); err != nil {
+		// L'échec n'est pas fatal : le relevé repartira au prochain passage,
+		// puisque la date d'envoi n'est pas marquée.
+		log.Error("relevé d'échéances : envoi", "erreur", err)
+		return
+	}
+	if err := st.MarquerEnvoi(time.Now()); err != nil {
+		log.Warn("relevé d'échéances : horodatage", "erreur", err)
+	}
+	log.Info("relevé d'échéances envoyé", "alertes", len(alertes),
+		"destinataires", len(courriel.AdressesValides(destinataires)))
 }
 
 // sauvegarder écrit un instantané de la base et fait tourner les anciens.

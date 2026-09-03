@@ -33,6 +33,7 @@ const routes = [
   [/^\/historique$/, () => vueHistorique()],
   [/^\/incidents$/, () => vueIncidents()],
   [/^\/alertes$/, () => vueAlertes()],
+  [/^\/releve$/, () => vueReleve()],
   [/^\/agents$/, () => vueAgents()],
   [/^\/journal$/, () => vueJournal()],
   [/^\/conservation$/, () => vueConservation()],
@@ -1746,6 +1747,117 @@ async function vueAlertes() {
 const JOURS_PREAVIS_CT = 30;
 const KM_PREAVIS_REVISION = 1000;
 
+
+// --- Relevé d'échéances par courriel -----------------------------------------
+
+// Les échéances n'étaient signalées qu'à l'ouverture de l'application : un
+// service qui ne l'ouvre pas ne voyait rien passer. Le relevé comble ce trou.
+//
+// Le relais SMTP se configure au démarrage du serveur, pas ici : un mot de
+// passe saisi dans l'interface serait stocké en clair dans la base. L'écran
+// le signale quand rien n'est configuré, plutôt que de laisser croire que le
+// réglage produit un effet.
+
+const FREQUENCES = [
+  ['desactivee', 'Ne pas envoyer'],
+  ['hebdomadaire', 'Une fois par semaine'],
+  ['quotidienne', 'Tous les jours'],
+];
+
+async function vueReleve() {
+  if (!session.peut('chef')) return vue404();
+  chargement();
+  const d = await api.notifications();
+  const n = d.notifications;
+
+  poser(`
+    ${retour('/reglages', 'Retour aux réglages')}
+    <header class="entete">
+      <h1>Relevé d'échéances</h1>
+      <p class="sous-titre">Recevoir par courriel les contrôles techniques et révisions à programmer</p>
+    </header>
+    <div id="zone-message"></div>
+
+    ${d.envoi_configure ? '' : message('attention',
+      "Aucun serveur d'envoi n'est configuré sur ce serveur. Les réglages ci-dessous "
+      + "seront enregistrés, mais aucun courriel ne partira tant que l'administrateur "
+      + "n'aura pas renseigné un relais SMTP au démarrage.")}
+
+    <form id="form-releve">
+      <div class="carte">
+        <div class="champ">
+          <label for="frequence">Fréquence</label>
+          <select id="frequence" name="frequence">
+            ${FREQUENCES.map(([v, l]) =>
+              `<option value="${v}"${v === n.frequence ? ' selected' : ''}>${l}</option>`).join('')}
+          </select>
+          <p class="aide">Aucun message n'est envoyé quand il n'y a rien à signaler :
+            un relevé vide reçu chaque semaine finit par ne plus être lu.</p>
+        </div>
+        <div class="champ" style="margin-bottom:0">
+          <label for="destinataires">Destinataires supplémentaires</label>
+          <textarea id="destinataires" name="destinataires"
+                    placeholder="dgs@ville-exemple.fr&#10;garage@ville-exemple.fr">${esc(n.destinataires.join('\n'))}</textarea>
+          <p class="aide">Une adresse par ligne. Les chefs de service et administrateurs
+            dont le courriel est renseigné sont destinataires d'office.</p>
+        </div>
+      </div>
+
+      <div class="carte">
+        <h2 style="margin-bottom:10px">Destinataires actuels</h2>
+        ${d.destinataires_effectifs.length
+          ? d.destinataires_effectifs.map((a) =>
+              `<div class="champ-lecture"><div class="val">${esc(a)}</div></div>`).join('')
+          : `<p class="discret">Aucun. Ajoutez une adresse ci-dessus, ou renseignez
+             le courriel des chefs dans la gestion des agents.</p>`}
+        ${d.prochain_envoi ? `<p class="discret" style="margin-top:12px">
+          Prochain envoi prévu le ${dateHeure(d.prochain_envoi)}.</p>` : ''}
+      </div>
+
+      <button class="btn" type="submit">Enregistrer</button>
+    </form>
+
+    ${d.envoi_configure ? `
+      <div class="carte" style="margin-top:16px">
+        <h2 style="margin-bottom:8px">Vérifier la configuration</h2>
+        <p class="discret" style="margin-bottom:12px">
+          Envoie le relevé maintenant, aux destinataires ci-dessus.</p>
+        <button class="btn secondaire" data-action="tester">Envoyer un relevé maintenant</button>
+      </div>` : ''}`);
+
+  const form = app.querySelector('#form-releve');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await enAttente(form.querySelector('button[type=submit]'), async () => {
+      try {
+        await api.definirNotifications({
+          frequence: form.frequence.value,
+          destinataires: form.destinataires.value.split('\n')
+            .map((a) => a.trim()).filter(Boolean),
+        });
+        await vueReleve();
+        poserMessage('succes', 'Réglages enregistrés.');
+      } catch (err) {
+        poserMessage('erreur', err.message);
+      }
+    });
+  });
+
+  surClic(async (action, data, e, cible) => {
+    if (action !== 'tester') return;
+    await enAttente(cible, async () => {
+      try {
+        const r = await api.envoyerReleve();
+        await vueReleve();
+        poserMessage('succes',
+          `Relevé envoyé à ${r.destinataires.length} destinataire(s).`);
+      } catch (err) {
+        poserMessage('erreur', err.message);
+      }
+    });
+  });
+}
+
 // --- Conservation des données ------------------------------------------------
 
 // Le RGPD impose une durée de conservation définie et justifiée. Elle relève du
@@ -1959,6 +2071,8 @@ async function vueReglages() {
                   data-action="export" data-fichier="entretiens">Entretiens et coûts</button>
         </div>
       </div>
+      <a class="btn secondaire" href="/releve" style="margin-bottom:12px">
+        ${icones.calendrier} Relevé d'échéances par courriel</a>
       <a class="btn secondaire" href="/agents" style="margin-bottom:12px">
         ${icones.agent} Gérer les agents</a>` : ''}
     ${session.peut('admin') ? `

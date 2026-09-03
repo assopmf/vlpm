@@ -73,6 +73,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/conservation/simulation", s.exiger("admin", s.postSimulerPurge))
 	mux.HandleFunc("POST /api/v1/conservation/purger", s.exiger("admin", s.postPurger))
 
+	// --- Relevé d'échéances par courriel ---
+	mux.HandleFunc("GET /api/v1/notifications", s.exiger("chef", s.getNotifications))
+	mux.HandleFunc("PATCH /api/v1/notifications", s.exiger("chef", s.patchNotifications))
+	mux.HandleFunc("POST /api/v1/notifications/envoyer", s.exiger("chef", s.postEnvoyerReleve))
+
 	// --- Comptes ---
 	mux.HandleFunc("GET /api/v1/agents", s.authentifier(s.getUsers))
 	mux.HandleFunc("POST /api/v1/agents", s.exiger("chef", s.postUsers))

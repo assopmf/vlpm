@@ -391,6 +391,35 @@ La purge automatique s'exécute une fois par jour, immédiatement après la
 sauvegarde quotidienne : un instantané récent existe donc toujours au moment où
 des enregistrements disparaissent.
 
+## Relevé d'échéances
+
+| Route | Rôle | Description |
+|---|---|---|
+| `GET /notifications` | chef | Réglages, destinataires effectifs, état du relais |
+| `PATCH /notifications` | chef | Modifie fréquence et destinataires |
+| `POST /notifications/envoyer` | chef | Expédie un relevé immédiatement |
+
+```json
+{"frequence": "hebdomadaire", "destinataires": ["dgs@ville-exemple.fr"]}
+```
+
+`frequence` vaut `desactivee`, `quotidienne` ou `hebdomadaire`. Une adresse mal
+formée est refusée avec `422 adresse_invalide` plutôt qu'ignorée en silence :
+un chef qui croit être destinataire et ne reçoit jamais rien est pire que rien.
+
+`GET /notifications` renvoie `envoi_configure` : à `false`, aucun relais SMTP
+n'est configuré sur le serveur et les réglages resteront sans effet. Le relais
+se configure au démarrage (voir le README), jamais par l'API — un mot de passe
+SMTP n'a pas à être stocké en base.
+
+Les chefs et administrateurs actifs dont le courriel est renseigné sont
+destinataires d'office, en plus des adresses saisies. `destinataires_effectifs`
+donne la liste consolidée, dédoublonnée.
+
+`POST /notifications/envoyer` sert à vérifier la configuration. Il refuse avec
+`422 rien_a_signaler` s'il n'y a aucune échéance : le relevé automatique ne
+part jamais à vide non plus.
+
 ## Comptes
 
 | Route | Rôle | Description |

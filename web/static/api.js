@@ -150,4 +150,8 @@ export const api = {
   definirConservation: (c) => requete('PATCH', '/conservation', c),
   simulerPurge: (c) => requete('POST', '/conservation/simulation', c),
   purger: () => requete('POST', '/conservation/purger'),
+
+  notifications: () => requete('GET', '/notifications'),
+  definirNotifications: (n) => requete('PATCH', '/notifications', n),
+  envoyerReleve: () => requete('POST', '/notifications/envoyer'),
 };

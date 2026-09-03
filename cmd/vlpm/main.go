@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -30,6 +31,11 @@ func main() {
 }
 
 func run() error {
+	// Les sous-commandes utilitaires n'ont pas besoin du serveur.
+	if traite, err := executerSousCommande(os.Args[1:]); traite {
+		return err
+	}
+
 	cfg, err := config.Charger(os.Args[1:])
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -67,6 +73,7 @@ func run() error {
 	ctx, arreterMenage := context.WithCancel(context.Background())
 	defer arreterMenage()
 	go menage(ctx, authSvc, srv, log)
+	go sauvegardeAutomatique(ctx, st, cfg, log)
 
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
@@ -114,6 +121,53 @@ func menage(ctx context.Context, a *auth.Service, srv *api.Server, log *slog.Log
 				log.Info("sessions expirées supprimées", "nombre", n)
 			}
 			srv.PurgerLimiteur()
+		}
+	}
+}
+
+// sauvegardeAutomatique écrit un instantané quotidien de la base.
+//
+// Elle protège d'une corruption ou d'une fausse manœuvre, pas d'une panne du
+// disque : la copie est au même endroit que l'original. Une copie hors machine
+// reste indispensable, et le README le dit.
+func sauvegardeAutomatique(ctx context.Context, st *store.Store, cfg config.Config, log *slog.Logger) {
+	if cfg.SauvegardesGardees < 0 {
+		log.Info("sauvegarde automatique désactivée")
+		return
+	}
+	dossier := filepath.Join(cfg.DataDir, "sauvegardes")
+
+	ecrire := func() {
+		fichier := filepath.Join(dossier, store.NomSauvegarde(time.Now()))
+		taille, err := st.Sauvegarder(fichier)
+		if err != nil {
+			log.Error("sauvegarde automatique", "erreur", err)
+			return
+		}
+		log.Info("sauvegarde écrite", "fichier", fichier, "octets", taille)
+
+		if supprimes, err := store.PurgerSauvegardes(dossier, cfg.SauvegardesGardees); err != nil {
+			log.Warn("purge des anciennes sauvegardes", "erreur", err)
+		} else if len(supprimes) > 0 {
+			log.Info("anciennes sauvegardes supprimées", "nombre", len(supprimes))
+		}
+	}
+
+	// Une première sauvegarde peu après le démarrage : sur une machine éteinte
+	// chaque soir, un rythme strictement quotidien n'aboutirait jamais.
+	premiere := time.NewTimer(5 * time.Minute)
+	defer premiere.Stop()
+	t := time.NewTicker(24 * time.Hour)
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-premiere.C:
+			ecrire()
+		case <-t.C:
+			ecrire()
 		}
 	}
 }

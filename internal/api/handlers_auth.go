@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -252,6 +253,18 @@ func (s *Server) patchUser(w http.ResponseWriter, r *http.Request) {
 		if !*req.Actif && u.ID == acteur.ID {
 			erreur(w, http.StatusUnprocessableEntity, "Vous ne pouvez pas désactiver votre propre compte.", "auto_desactivation")
 			return
+		}
+		// Un agent désactivé alors qu'il détient un véhicule laisserait celui-ci
+		// bloqué « en service » avec une sortie ouverte au nom de quelqu'un qui
+		// ne peut plus se connecter. Le véhicule disparaîtrait du parc
+		// disponible sans que rien ne le signale.
+		if !*req.Actif {
+			if enCours, err := s.st.CheckoutEnCoursPourAgent(u.ID); err == nil {
+				erreur(w, http.StatusConflict, fmt.Sprintf(
+					"%s détient actuellement le véhicule %s. Clôturez cette sortie avant de désactiver le compte.",
+					u.NomComplet(), enCours.VehicleCode), "detient_vehicule")
+				return
+			}
 		}
 		if !*req.Actif && u.Role == "admin" {
 			nb, err := s.compterAdminsActifs()

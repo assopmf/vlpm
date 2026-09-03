@@ -176,14 +176,55 @@ supervision si vous en avez une.
 
 ### Sauvegardes
 
-Toute la base tient dans un fichier. Copiez-le, c'est tout :
+Le serveur écrit **une sauvegarde par jour** dans `<data>/sauvegardes`, et
+conserve les 14 dernières. C'est automatique, rien à configurer.
 
 ```bash
-sqlite3 /var/lib/vlpm/vlpm.db ".backup '/sauvegardes/vlpm-$(date +%F).db'"
+vlpm --sauvegardes 30     # en conserver 30
+vlpm --sauvegardes 0      # toutes les conserver
+vlpm --sauvegardes -1     # désactiver
 ```
 
-À défaut de `sqlite3`, arrêtez le service et copiez `vlpm.db`, `vlpm.db-wal` et
-`vlpm.db-shm` ensemble.
+Sauvegarde manuelle, à tout moment, serveur en marche ou non :
+
+```bash
+vlpm sauvegarder --data /var/lib/vlpm
+```
+
+La sauvegarde est un instantané cohérent obtenu par `VACUUM INTO` : inutile
+d'arrêter le service, et le fichier produit s'ouvre directement comme une base
+normale. Une simple copie de `vlpm.db` laisserait des transactions dans le
+journal WAL et pourrait donner un fichier tronqué.
+
+**Attention : ces sauvegardes sont sur le même disque que la base.** Elles
+protègent d'une corruption ou d'une fausse manœuvre, pas d'une panne de disque
+ni d'un vol de la machine. Copiez-les ailleurs :
+
+```bash
+rsync -a /var/lib/vlpm/sauvegardes/ sauvegarde@nas.mairie.local:/vlpm/
+```
+
+Pour restaurer, remplacez `vlpm.db` par la sauvegarde choisie, service arrêté.
+
+### Perte du mot de passe administrateur
+
+Il n'y a **pas d'envoi de courriel** : si le dernier administrateur perd son
+mot de passe, personne ne peut le lui rendre depuis l'application. La commande
+suivante rétablit l'accès, depuis la machine qui héberge l'instance :
+
+```bash
+vlpm reinitialiser-admin --data /var/lib/vlpm
+```
+
+Elle affiche un nouveau mot de passe provisoire, réactive et repromeut le
+compte si nécessaire, ferme ses sessions ouvertes, et le recrée s'il avait été
+supprimé. Le serveur peut rester en marche.
+
+Cette commande n'est pas protégée par mot de passe, et n'a pas à l'être :
+quiconque peut la lancer a déjà un accès en écriture au fichier de base, et
+pourrait le modifier avec n'importe quel outil SQLite. **La protection réelle
+est celle du système de fichiers** — d'où le compte système dédié et les
+permissions `0750` posées par les installateurs.
 
 ---
 
@@ -198,6 +239,9 @@ Chaque option a son équivalent en variable d'environnement.
 | `--base-url` | `VLPM_BASE_URL` | — | URL publique, encodée dans les QR codes |
 | `--derriere-proxy` | `VLPM_DERRIERE_PROXY` | `false` | Fait confiance à `X-Forwarded-For` |
 | `--dev` | `VLPM_DEV` | `false` | Sert l'interface depuis le disque |
+| `--sauvegardes` | `VLPM_SAUVEGARDES` | `14` | Sauvegardes quotidiennes conservées (`0` toutes, `-1` désactive) |
+
+Sous-commandes : `vlpm sauvegarder`, `vlpm reinitialiser-admin`, `vlpm aide`.
 
 ---
 
@@ -212,6 +256,10 @@ Chaque option a son équivalent en variable d'environnement.
 | **Administrateur** | Tout cela, plus : gérer les comptes administrateurs et consulter le journal d'activité |
 
 ### Le parcours quotidien
+
+Le véhicule est enregistré au nom d'**un seul agent : celui qui conduit et qui
+répond du véhicule**. Un équipage de deux ou trois agents n'apparaît pas en
+entier, et c'est voulu — la responsabilité du véhicule est individuelle.
 
 1. L'agent scanne le QR code collé dans le véhicule, ou le choisit dans la liste.
 2. Il relève le kilométrage, coche l'état des lieux, indique le motif de sortie.
@@ -370,4 +418,11 @@ annexe du texte.
 - **Pas de photos.** On ne peut pas joindre de cliché à un constat de dommage.
 - **Pas de notifications** d'échéance de contrôle technique ou de révision : les
   dates sont enregistrées et affichées, mais rien ne les rappelle.
-- **Sauvegarde manuelle.** Aucune sauvegarde automatique n'est programmée.
+- **Aucune purge des données.** L'historique des sorties et le journal d'audit
+  s'accumulent indéfiniment. Le RGPD impose une durée de conservation définie
+  et justifiée : à fixer avec le DPO de la commune, puis à implémenter. Comptez
+  environ 50 Mo de base après cinq ans pour un parc de dix véhicules.
+- **Obligations RGPD à traiter avant déploiement.** L'application trace
+  nominativement l'activité d'agents publics : inscription au registre des
+  traitements, information des agents, et consultation des instances
+  représentatives du personnel.

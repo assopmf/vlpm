@@ -18,6 +18,11 @@ type Config struct {
 	BaseURL       string // URL publique, utilisée pour générer les QR codes
 	Dev           bool   // sert le front depuis le disque au lieu de l'embarqué
 	DerriereProxy bool   // fait confiance à X-Forwarded-For / X-Forwarded-Proto
+
+	// SauvegardesGardees : nombre de sauvegardes quotidiennes conservées.
+	// 0 les conserve toutes, une valeur négative désactive la sauvegarde
+	// automatique.
+	SauvegardesGardees int
 }
 
 func (c Config) DBPath() string { return filepath.Join(c.DataDir, "vlpm.db") }
@@ -37,6 +42,8 @@ func Charger(args []string) (Config, error) {
 	fs.BoolVar(&c.Dev, "dev", envBool("VLPM_DEV", false), "mode développement : front rechargé depuis le disque")
 	fs.BoolVar(&c.DerriereProxy, "derriere-proxy", envBool("VLPM_DERRIERE_PROXY", false),
 		"l'application est derrière un reverse proxy (nginx, Caddy, Traefik)")
+	fs.IntVar(&c.SauvegardesGardees, "sauvegardes", envInt("VLPM_SAUVEGARDES", 14),
+		"sauvegardes quotidiennes conservées (0 = toutes, -1 = désactiver)")
 	fs.Usage = func() {
 		fmt.Fprintf(fs.Output(), "VLPM — gestion du parc automobile d'une police municipale\n\nUsage :\n  vlpm [options]\n\nOptions :\n")
 		fs.PrintDefaults()
@@ -76,6 +83,15 @@ func defautDataDir() string {
 func env(cle, def string) string {
 	if v, ok := os.LookupEnv(cle); ok && v != "" {
 		return v
+	}
+	return def
+}
+
+func envInt(cle string, def int) int {
+	if v, ok := os.LookupEnv(cle); ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 	return def
 }

@@ -43,6 +43,10 @@ Les données sont écrites dans un sous-dossier `data`, à côté de l'exécutab
 Déplacer ce dossier déplace toute l'installation ; le copier suffit à la
 sauvegarder.
 
+Pour que l'application redémarre toute seule après un plantage ou un
+redémarrage de la machine, installez-la en service : voir
+« Redémarrage automatique » plus bas.
+
 ### Serveur Linux, en service permanent
 
 ```bash
@@ -116,6 +120,59 @@ vlpm --addr 127.0.0.1:8080 \
 `--base-url` est ce qui est encodé dans les QR codes. Sans cette option, les
 étiquettes restent lisibles depuis l'application mais pas depuis l'appareil
 photo du téléphone.
+
+### Redémarrage automatique
+
+Un serveur qui ne repart pas seul n'est pas exploitable : personne ne surveille
+une machine dans un poste de police. Chaque mode d'installation gère à la fois
+le plantage du serveur et le redémarrage de la machine.
+
+| Installation | Après un plantage | Après un redémarrage machine |
+|---|---|---|
+| `scripts/installer.sh` (Linux, systemd) | relance sous 5 s, sans limite | oui, au boot |
+| `scripts/installer-macos.sh` | relance sous 10 s, sans limite | à l'ouverture de session, ou au boot avec `--systeme` |
+| `scripts/installer-windows.ps1` | relance sous 1 min, 999 fois | oui, au boot |
+| `docker compose` | relance immédiate | oui, si le démon Docker démarre au boot |
+
+Deux réglages méritent d'être connus, parce que leur valeur par défaut est
+mauvaise pour ce type de service :
+
+- **systemd** abandonne par défaut après 5 relances en 10 secondes, et le
+  service reste éteint. La limite est levée (`StartLimitIntervalSec=0`) : mieux
+  vaut un service qui s'obstine qu'un service mort découvert à la prise de
+  service. Une boucle de plantage reste visible dans `journalctl -u vlpm`.
+- **systemd** utilise aussi `Restart=on-failure` dans la plupart des exemples,
+  ce qui ne relance pas un processus sorti proprement. Ici c'est
+  `Restart=always`.
+
+#### macOS
+
+```bash
+make build
+./scripts/installer-macos.sh                 # démarre à l'ouverture de session
+sudo ./scripts/installer-macos.sh --systeme  # démarre au boot, sans session
+```
+
+Données dans `~/Library/Application Support/VLPM` (ou `/usr/local/var/vlpm` en
+mode système). Désinstallation : `./scripts/installer-macos.sh --desinstaller`.
+
+#### Windows
+
+Dans un PowerShell **administrateur** :
+
+```powershell
+.\scripts\installer-windows.ps1
+```
+
+La tâche s'exécute sous le compte SYSTEM, donc sans session ouverte. Données
+dans `C:\ProgramData\VLPM`.
+
+#### Ce que la supervision ne couvre pas
+
+Relancer un processus ne répare pas une base corrompue ni un disque plein : le
+service repartirait en boucle. Surveillez `/healthz`, qui répond `503` si la
+base est injoignable — c'est le point de contrôle à brancher sur votre
+supervision si vous en avez une.
 
 ### Sauvegardes
 

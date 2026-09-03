@@ -53,12 +53,25 @@ Documentation=https://github.com/assopmf/vlpm
 After=network-online.target
 Wants=network-online.target
 
+# systemd abandonne par défaut après 5 redémarrages en 10 secondes. Pour un
+# poste de police, mieux vaut un service qui s'obstine qu'un service mort :
+# la limite est levée. Une boucle de redémarrage reste visible au journal
+# (journalctl -u vlpm). Ces deux clés appartiennent à [Unit] : placées dans
+# [Service], systemd les ignore.
+StartLimitIntervalSec=0
+StartLimitBurst=0
+
 [Service]
 Type=simple
 User=$UTILISATEUR
 Group=$UTILISATEUR
 ExecStart=$DESTINATION --addr 127.0.0.1:8080 --data $DOSSIER_DONNEES
-Restart=on-failure
+
+# always et non on-failure : un serveur qui s'arrête proprement doit repartir
+# tout autant qu'un serveur qui plante. Sans cela, une sortie en code 0 --
+# arrêt sur signal, cas limite non prévu -- laisserait le service éteint sans
+# que personne ne s'en aperçoive avant la prochaine prise de service.
+Restart=always
 RestartSec=5
 
 # Renseignez l'URL publique pour que les QR codes collés dans les véhicules

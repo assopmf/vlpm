@@ -62,6 +62,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/export/entretiens.csv", s.exiger("chef", s.getExportEntretiens))
 	mux.HandleFunc("GET /api/v1/journal", s.exiger("admin", s.getAudit))
 
+	// --- Conservation des données (RGPD) ---
+	mux.HandleFunc("GET /api/v1/conservation", s.exiger("admin", s.getConservation))
+	mux.HandleFunc("PATCH /api/v1/conservation", s.exiger("admin", s.patchConservation))
+	mux.HandleFunc("POST /api/v1/conservation/simulation", s.exiger("admin", s.postSimulerPurge))
+	mux.HandleFunc("POST /api/v1/conservation/purger", s.exiger("admin", s.postPurger))
+
 	// --- Comptes ---
 	mux.HandleFunc("GET /api/v1/agents", s.authentifier(s.getUsers))
 	mux.HandleFunc("POST /api/v1/agents", s.exiger("chef", s.postUsers))

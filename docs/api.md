@@ -306,6 +306,45 @@ emploient la virgule décimale, seule forme qu'Excel y reconnaît comme un nombr
 Filtres : `vehicule` sur les quatre, `statut`, `depuis` et `jusqua` sur
 `prises.csv`, `statut` sur `incidents.csv`, `archives=1` sur `parc.csv`.
 
+## Conservation des données
+
+Durées au-delà desquelles les données sont supprimées définitivement. Réservé
+aux administrateurs.
+
+| Route | Description |
+|---|---|
+| `GET /conservation` | Durées configurées, et aperçu de ce qu'une purge supprimerait |
+| `PATCH /conservation` | Modifie les durées |
+| `POST /conservation/simulation` | Chiffre l'effet de durées **sans les enregistrer** |
+| `POST /conservation/purger` | Déclenche la purge immédiatement |
+
+```json
+{"activite_mois": 24, "journal_mois": 12}
+```
+
+`activite_mois` couvre les sorties terminées et les incidents résolus,
+`journal_mois` le journal d'audit. `0` conserve indéfiniment, ce qui est la
+valeur par défaut : aucune donnée n'est supprimée tant que personne ne l'a
+décidé.
+
+Minimums imposés : 12 mois pour l'activité, 6 mois pour le journal. En dessous,
+la requête est refusée avec `422 duree_invalide`.
+
+**Les sorties en cours et les incidents ouverts ne sont jamais supprimés**,
+quelle que soit leur ancienneté.
+
+`POST /conservation/simulation` accepte les mêmes champs et renvoie le
+décompte sans rien modifier — à appeler avant d'enregistrer une durée, la
+suppression étant irréversible :
+
+```json
+{"a_purger": {"sorties": 2, "incidents": 0, "journal": 2}}
+```
+
+La purge automatique s'exécute une fois par jour, immédiatement après la
+sauvegarde quotidienne : un instantané récent existe donc toujours au moment où
+des enregistrements disparaissent.
+
 ## Comptes
 
 | Route | Rôle | Description |

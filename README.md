@@ -206,6 +206,37 @@ rsync -a /var/lib/vlpm/sauvegardes/ sauvegarde@nas.mairie.local:/vlpm/
 
 Pour restaurer, remplacez `vlpm.db` par la sauvegarde choisie, service arrêté.
 
+### Conservation des données (RGPD)
+
+L'application enregistre nominativement l'activité d'agents publics. Le RGPD
+impose une **durée de conservation définie et justifiée** : elle relève du
+délégué à la protection des données de la commune, pas du code. Elle se règle
+donc depuis l'application, sans redéploiement.
+
+Un administrateur la fixe dans **Réglages → Conservation des données**, avec
+deux durées distinctes :
+
+- **historique d'activité** : sorties terminées et incidents résolus ;
+- **journal d'activité** : connexions, créations de comptes, actions sensibles.
+
+**Par défaut, rien n'est supprimé.** Une instance qui effacerait des données
+sans que personne l'ait décidé serait un défaut, pas une fonctionnalité.
+
+Trois garde-fous, la suppression étant irréversible :
+
+- l'écran chiffre **avant validation** le nombre exact d'enregistrements que la
+  durée choisie supprimerait aujourd'hui ;
+- une **sauvegarde est écrite juste avant** chaque purge automatique ;
+- les **sorties en cours et les incidents ouverts ne sont jamais supprimés**,
+  quelle que soit leur ancienneté. Une sortie ouverte depuis deux ans est une
+  anomalie à traiter, pas une donnée à effacer.
+
+La purge s'exécute une fois par jour. Un bouton permet de la déclencher
+immédiatement.
+
+Les durées minimales acceptées sont de 12 mois pour l'activité et 6 mois pour
+le journal : en dessous, on effacerait des données de l'exercice en cours.
+
 ### Perte du mot de passe administrateur
 
 Il n'y a **pas d'envoi de courriel** : si le dernier administrateur perd son
@@ -418,11 +449,8 @@ annexe du texte.
 - **Pas de photos.** On ne peut pas joindre de cliché à un constat de dommage.
 - **Pas de notifications** d'échéance de contrôle technique ou de révision : les
   dates sont enregistrées et affichées, mais rien ne les rappelle.
-- **Aucune purge des données.** L'historique des sorties et le journal d'audit
-  s'accumulent indéfiniment. Le RGPD impose une durée de conservation définie
-  et justifiée : à fixer avec le DPO de la commune, puis à implémenter. Comptez
-  environ 50 Mo de base après cinq ans pour un parc de dix véhicules.
 - **Obligations RGPD à traiter avant déploiement.** L'application trace
   nominativement l'activité d'agents publics : inscription au registre des
   traitements, information des agents, et consultation des instances
-  représentatives du personnel.
+  représentatives du personnel. La durée de conservation, elle, se règle
+  désormais dans l'application (voir plus haut) : reste à la faire décider.

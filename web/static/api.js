@@ -144,4 +144,9 @@ export const api = {
   reinitialiserMotDePasse: (id) => requete('POST', `/agents/${id}/mot-de-passe`),
 
   journal: () => requete('GET', '/journal'),
+
+  conservation: () => requete('GET', '/conservation'),
+  definirConservation: (c) => requete('PATCH', '/conservation', c),
+  simulerPurge: (c) => requete('POST', '/conservation/simulation', c),
+  purger: () => requete('POST', '/conservation/purger'),
 };

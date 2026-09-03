@@ -33,6 +33,7 @@ const routes = [
   [/^\/incidents$/, () => vueIncidents()],
   [/^\/agents$/, () => vueAgents()],
   [/^\/journal$/, () => vueJournal()],
+  [/^\/conservation$/, () => vueConservation()],
   [/^\/reglages$/, () => vueReglages()],
   [/^\/attente$/, () => vueFileAttente()],
 ];
@@ -1584,6 +1585,166 @@ async function vueFileAttente() {
   });
 }
 
+
+// --- Conservation des données ------------------------------------------------
+
+// Le RGPD impose une durée de conservation définie et justifiée. Elle relève du
+// DPO de la commune, pas du code : elle se règle donc ici. Comme une purge est
+// irréversible, l'écran chiffre systématiquement ce qui serait supprimé avant
+// que l'administrateur valide quoi que ce soit.
+
+const DUREES_ACTIVITE = [
+  [0, 'Illimitée — ne rien supprimer'],
+  [12, '1 an'], [24, '2 ans'], [36, '3 ans'], [60, '5 ans'], [120, '10 ans'],
+];
+const DUREES_JOURNAL = [
+  [0, 'Illimitée — ne rien supprimer'],
+  [6, '6 mois'], [12, '1 an'], [24, '2 ans'], [36, '3 ans'], [60, '5 ans'],
+];
+
+async function vueConservation() {
+  if (!session.peut('admin')) return vue404();
+  chargement();
+  const d = await api.conservation();
+  const c = d.conservation;
+  const active = c.activite_mois > 0 || c.journal_mois > 0;
+
+  const options = (liste, valeur) => liste.map(([v, l]) =>
+    `<option value="${v}"${v === valeur ? ' selected' : ''}>${l}</option>`).join('');
+
+  poser(`
+    ${retour('/reglages', 'Retour aux réglages')}
+    <header class="entete">
+      <h1>Conservation des données</h1>
+      <p class="sous-titre">Durée au-delà de laquelle les données sont supprimées définitivement</p>
+    </header>
+    <div id="zone-message"></div>
+
+    <div class="message info">
+      L'application enregistre nominativement l'activité d'agents publics. Le RGPD
+      impose une durée de conservation définie et justifiée : elle relève du délégué
+      à la protection des données de votre commune.
+    </div>
+
+    <form id="form-conservation">
+      <div class="carte">
+        <div class="champ">
+          <label for="activite">Historique d'activité</label>
+          <select id="activite" name="activite">${options(DUREES_ACTIVITE, c.activite_mois)}</select>
+          <p class="aide">Sorties terminées et incidents résolus. Les sorties en cours
+            et les incidents ouverts ne sont jamais supprimés, quelle que soit leur ancienneté.</p>
+        </div>
+        <div class="champ" style="margin-bottom:0">
+          <label for="journal">Journal d'activité</label>
+          <select id="journal" name="journal">${options(DUREES_JOURNAL, c.journal_mois)}</select>
+          <p class="aide">Connexions, créations de comptes, actions sensibles.</p>
+        </div>
+      </div>
+
+      <div class="carte" id="apercu">${apercuPurge(d.a_purger, active)}</div>
+
+      <button class="btn" type="submit">Enregistrer ces durées</button>
+    </form>
+
+    ${active ? `
+      <div class="carte" style="margin-top:16px">
+        <h2 style="margin-bottom:8px">Purge immédiate</h2>
+        <p class="discret" style="margin-bottom:12px">
+          La purge s'exécute automatiquement une fois par jour, après la sauvegarde.
+          Ce bouton la déclenche sans attendre.</p>
+        <button class="btn danger" data-action="purger">Purger maintenant</button>
+      </div>` : ''}
+
+    ${c.derniere_purge ? `
+      <p class="discret" style="margin-top:14px;text-align:center">
+        Dernière purge : ${dateHeure(c.derniere_purge)}</p>` : ''}`);
+
+  const form = app.querySelector('#form-conservation');
+
+  // Le chiffrage se met à jour à chaque changement, avant tout enregistrement.
+  const rafraichirApercu = async () => {
+    const choix = {
+      activite_mois: Number(form.activite.value),
+      journal_mois: Number(form.journal.value),
+    };
+    const bloc = app.querySelector('#apercu');
+    bloc.innerHTML = '<p class="discret">Calcul en cours…</p>';
+    try {
+      const r = await api.simulerPurge(choix);
+      bloc.innerHTML = apercuPurge(r.a_purger,
+        choix.activite_mois > 0 || choix.journal_mois > 0);
+    } catch (err) {
+      bloc.innerHTML = message('erreur', err.message);
+    }
+  };
+  form.activite.addEventListener('change', rafraichirApercu);
+  form.journal.addEventListener('change', rafraichirApercu);
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await enAttente(form.querySelector('button[type=submit]'), async () => {
+      try {
+        await api.definirConservation({
+          activite_mois: Number(form.activite.value),
+          journal_mois: Number(form.journal.value),
+        });
+        await vueConservation();
+        poserMessage('succes',
+          'Durées enregistrées. La purge s\'exécutera à la prochaine échéance quotidienne.');
+      } catch (err) {
+        poserMessage('erreur', err.message);
+      }
+    });
+  });
+
+  surClic(async (action, data, e, cible) => {
+    if (action !== 'purger') return;
+    const r = await api.simulerPurge({});
+    const total = r.a_purger.sorties + r.a_purger.incidents + r.a_purger.journal;
+    if (total === 0) {
+      poserMessage('info', "Aucune donnée n'a dépassé la durée de conservation.");
+      return;
+    }
+    if (!confirm(`${nombre(total)} enregistrement(s) vont être supprimés définitivement.\n\n`
+      + `Sorties : ${nombre(r.a_purger.sorties)}\n`
+      + `Incidents résolus : ${nombre(r.a_purger.incidents)}\n`
+      + `Entrées de journal : ${nombre(r.a_purger.journal)}\n\n`
+      + `Cette action est irréversible. Confirmer ?`)) return;
+
+    await enAttente(cible, async () => {
+      try {
+        const bilan = await api.purger();
+        await vueConservation();
+        poserMessage('succes',
+          `${nombre(bilan.supprime.sorties + bilan.supprime.incidents + bilan.supprime.journal)} enregistrement(s) supprimé(s).`);
+      } catch (err) {
+        poserMessage('erreur', err.message);
+      }
+    });
+  });
+}
+
+function apercuPurge(b, active) {
+  if (!active) {
+    return `<h2 style="margin-bottom:8px">Effet</h2>
+      <p class="discret">Aucune durée définie : rien ne sera supprimé.</p>`;
+  }
+  const total = b.sorties + b.incidents + b.journal;
+  if (total === 0) {
+    return `<h2 style="margin-bottom:8px">Effet</h2>
+      <p class="discret">Aucune donnée existante ne dépasse ces durées.</p>`;
+  }
+  return `
+    <h2 style="margin-bottom:10px">Ce qui serait supprimé aujourd'hui</h2>
+    ${message('attention', `${nombre(total)} enregistrement(s), définitivement.`)}
+    <div class="champ-lecture"><div class="cle">Sorties terminées</div>
+      <div class="val">${nombre(b.sorties)}</div></div>
+    <div class="champ-lecture"><div class="cle">Incidents résolus</div>
+      <div class="val">${nombre(b.incidents)}</div></div>
+    <div class="champ-lecture"><div class="cle">Entrées de journal</div>
+      <div class="val">${nombre(b.journal)}</div></div>`;
+}
+
 // --- Réglages --------------------------------------------------------------
 
 async function vueReglages() {
@@ -1642,7 +1803,9 @@ async function vueReglages() {
         ${icones.agent} Gérer les agents</a>` : ''}
     ${session.peut('admin') ? `
       <a class="btn secondaire" href="/journal" style="margin-bottom:12px">
-        ${icones.historique} Journal d'activité</a>` : ''}
+        ${icones.historique} Journal d'activité</a>
+      <a class="btn secondaire" href="/conservation" style="margin-bottom:12px">
+        ${icones.bouclier} Conservation des données</a>` : ''}
 
     <button class="btn danger" data-action="deconnexion">${icones.sortie} Se déconnecter</button>`);
 

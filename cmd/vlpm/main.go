@@ -73,7 +73,7 @@ func run() error {
 	ctx, arreterMenage := context.WithCancel(context.Background())
 	defer arreterMenage()
 	go menage(ctx, authSvc, srv, log)
-	go sauvegardeAutomatique(ctx, st, cfg, log)
+	go entretienQuotidien(ctx, st, cfg, log)
 
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
@@ -125,35 +125,47 @@ func menage(ctx context.Context, a *auth.Service, srv *api.Server, log *slog.Log
 	}
 }
 
-// sauvegardeAutomatique écrit un instantané quotidien de la base.
-//
-// Elle protège d'une corruption ou d'une fausse manœuvre, pas d'une panne du
-// disque : la copie est au même endroit que l'original. Une copie hors machine
-// reste indispensable, et le README le dit.
-func sauvegardeAutomatique(ctx context.Context, st *store.Store, cfg config.Config, log *slog.Logger) {
-	if cfg.SauvegardesGardees < 0 {
-		log.Info("sauvegarde automatique désactivée")
+// purgerDonnees applique les durées de conservation fixées par
+// l'administrateur. Sans durée configurée, rien n'est supprimé.
+func purgerDonnees(st *store.Store, log *slog.Logger) {
+	c := st.Conservation()
+	if c.ActiviteMois == 0 && c.JournalMois == 0 {
 		return
 	}
-	dossier := filepath.Join(cfg.DataDir, "sauvegardes")
+	bilan, err := st.Purger(c)
+	if err != nil {
+		log.Error("purge des données anciennes", "erreur", err)
+		return
+	}
+	if bilan.Total() > 0 {
+		log.Info("données anciennes purgées",
+			"sorties", bilan.Sorties, "incidents", bilan.Incidents,
+			"journal", bilan.Journal,
+			"conservation_activite_mois", c.ActiviteMois,
+			"conservation_journal_mois", c.JournalMois)
+	}
+}
 
-	ecrire := func() {
-		fichier := filepath.Join(dossier, store.NomSauvegarde(time.Now()))
-		taille, err := st.Sauvegarder(fichier)
-		if err != nil {
-			log.Error("sauvegarde automatique", "erreur", err)
-			return
-		}
-		log.Info("sauvegarde écrite", "fichier", fichier, "octets", taille)
-
-		if supprimes, err := store.PurgerSauvegardes(dossier, cfg.SauvegardesGardees); err != nil {
-			log.Warn("purge des anciennes sauvegardes", "erreur", err)
-		} else if len(supprimes) > 0 {
-			log.Info("anciennes sauvegardes supprimées", "nombre", len(supprimes))
-		}
+// entretienQuotidien enchaîne, une fois par jour, la sauvegarde de la base
+// puis la purge des données arrivées au terme de leur conservation.
+//
+// L'ordre compte : une sauvegarde fraîche existe toujours au moment où des
+// enregistrements sont supprimés définitivement. Les deux tâches restent
+// indépendantes — désactiver les sauvegardes ne doit pas désactiver une purge
+// exigée par le RGPD.
+func entretienQuotidien(ctx context.Context, st *store.Store, cfg config.Config, log *slog.Logger) {
+	if cfg.SauvegardesGardees < 0 {
+		log.Info("sauvegarde automatique désactivée")
 	}
 
-	// Une première sauvegarde peu après le démarrage : sur une machine éteinte
+	passe := func() {
+		if cfg.SauvegardesGardees >= 0 {
+			sauvegarder(st, cfg, log)
+		}
+		purgerDonnees(st, log)
+	}
+
+	// Un premier passage peu après le démarrage : sur une machine éteinte
 	// chaque soir, un rythme strictement quotidien n'aboutirait jamais.
 	premiere := time.NewTimer(5 * time.Minute)
 	defer premiere.Stop()
@@ -165,10 +177,33 @@ func sauvegardeAutomatique(ctx context.Context, st *store.Store, cfg config.Conf
 		case <-ctx.Done():
 			return
 		case <-premiere.C:
-			ecrire()
+			passe()
 		case <-t.C:
-			ecrire()
+			passe()
 		}
+	}
+}
+
+// sauvegarder écrit un instantané de la base et fait tourner les anciens.
+//
+// La copie vit sur le même disque que l'original : elle protège d'une
+// corruption ou d'une fausse manœuvre, pas d'une panne matérielle. Une copie
+// hors machine reste indispensable, et le README l'explique.
+func sauvegarder(st *store.Store, cfg config.Config, log *slog.Logger) {
+	dossier := filepath.Join(cfg.DataDir, "sauvegardes")
+	fichier := filepath.Join(dossier, store.NomSauvegarde(time.Now()))
+
+	taille, err := st.Sauvegarder(fichier)
+	if err != nil {
+		log.Error("sauvegarde automatique", "erreur", err)
+		return
+	}
+	log.Info("sauvegarde écrite", "fichier", fichier, "octets", taille)
+
+	if supprimes, err := store.PurgerSauvegardes(dossier, cfg.SauvegardesGardees); err != nil {
+		log.Warn("purge des anciennes sauvegardes", "erreur", err)
+	} else if len(supprimes) > 0 {
+		log.Info("anciennes sauvegardes supprimées", "nombre", len(supprimes))
 	}
 }
 

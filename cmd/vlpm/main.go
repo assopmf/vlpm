@@ -146,6 +146,21 @@ func purgerDonnees(st *store.Store, log *slog.Logger) {
 	}
 }
 
+// balayerPhotos supprime du disque les fichiers dont plus aucune ligne ne
+// parle. Sans ce balayage, une purge de conservation effacerait les incidents
+// mais laisserait leurs photos : la commune s'est engagée à les supprimer, et
+// ce sont elles qui portent le plus de données personnelles.
+func balayerPhotos(cfg config.Config, st *store.Store, log *slog.Logger) {
+	n, err := store.BalayerPhotosOrphelines(st, filepath.Join(cfg.DataDir, "photos"))
+	if err != nil {
+		log.Error("balayage des photos orphelines", "erreur", err)
+		return
+	}
+	if n > 0 {
+		log.Info("photos orphelines supprimées", "nombre", n)
+	}
+}
+
 // entretienQuotidien enchaîne, une fois par jour, la sauvegarde de la base
 // puis la purge des données arrivées au terme de leur conservation.
 //
@@ -163,6 +178,7 @@ func entretienQuotidien(ctx context.Context, st *store.Store, cfg config.Config,
 			sauvegarder(st, cfg, log)
 		}
 		purgerDonnees(st, log)
+		balayerPhotos(cfg, st, log)
 	}
 
 	// Un premier passage peu après le démarrage : sur une machine éteinte

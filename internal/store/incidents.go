@@ -58,9 +58,25 @@ func (s *Store) ListIncidents(vehicleID int64, statut string) ([]Incident, error
 		if err != nil {
 			return nil, err
 		}
+		i.Photos = []Photo{}
 		out = append(out, *i)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Les photos sont jointes ici, en une seule requête groupée : les demander
+	// incident par incident produirait autant d'allers-retours que de lignes.
+	parIncident, err := s.photosParIncident()
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if photos, ok := parIncident[out[i].ID]; ok {
+			out[i].Photos = photos
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) incidentsOuvertsParVehicule() (map[int64]int, error) {

@@ -1,5 +1,6 @@
-# Données d'exécution : base SQLite, journaux WAL, sauvegardes.
-# Ne doivent jamais partir dans le dépôt (données nominatives d'agents).
+# Données d'exécution : base SQLite, journaux WAL, sauvegardes, photos de
+# constat. Ne doivent jamais partir dans le dépôt : données nominatives
+# d'agents, et clichés pouvant montrer des plaques, des lieux ou des tiers.
 /data/
 *.db
 *.db-shm

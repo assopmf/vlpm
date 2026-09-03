@@ -51,6 +51,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/incidents", s.authentifier(s.getIncidents))
 	mux.HandleFunc("POST /api/v1/incidents", s.authentifier(s.postIncidents))
 	mux.HandleFunc("POST /api/v1/incidents/{id}/resolution", s.exiger("chef", s.postResoudreIncident))
+	mux.HandleFunc("POST /api/v1/incidents/{id}/photos", s.authentifier(s.postPhoto))
+	mux.HandleFunc("GET /api/v1/photos/{id}", s.authentifier(s.getPhoto))
+	// Une pièce de constat ne doit pas disparaître sur décision d'un seul agent.
+	mux.HandleFunc("DELETE /api/v1/photos/{id}", s.exiger("chef", s.deletePhoto))
+	mux.HandleFunc("GET /api/v1/alertes", s.authentifier(s.getAlertes))
 	mux.HandleFunc("GET /api/v1/entretiens", s.authentifier(s.getMaintenances))
 	mux.HandleFunc("POST /api/v1/entretiens", s.exiger("chef", s.postMaintenances))
 

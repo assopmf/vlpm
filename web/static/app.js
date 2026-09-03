@@ -5,6 +5,7 @@
 // un libellé avec un éditeur de texte, sans chaîne d'outils Node.
 
 import { api, session, brancherExpiration, ErreurAPI } from './api.js';
+import { preparerPhoto, envoyerPhoto, urlPhoto } from './photos.js';
 import {
   empiler, abandonner, fileEnAttente, nombreEnAttente, synchroniser,
   memoriserParc, parcMemorise, surChangement, demarrerSynchronisation, nouvelleCle,
@@ -31,6 +32,7 @@ const routes = [
   [/^\/restituer\/(\d+)$/, (m) => vueRestitution(Number(m[1]))],
   [/^\/historique$/, () => vueHistorique()],
   [/^\/incidents$/, () => vueIncidents()],
+  [/^\/alertes$/, () => vueAlertes()],
   [/^\/agents$/, () => vueAgents()],
   [/^\/journal$/, () => vueJournal()],
   [/^\/conservation$/, () => vueConservation()],
@@ -67,6 +69,7 @@ async function rendre() {
         afficherErreurFatale(err);
       }
       window.scrollTo(0, 0);
+      chargerVignettes();
       return;
     }
   }
@@ -252,11 +255,15 @@ async function vueAccueil() {
   let stats;
   let moi = {};
   let vehicules;
+  let alertes = [];
   let instantane = null;
   try {
     [stats, moi] = await Promise.all([api.stats(), api.moi()]);
     vehicules = await api.vehicules('tous');
     memoriserParc(vehicules, stats);
+    // Les échéances ne sont pas vitales pour partir en patrouille : leur échec
+    // ne doit pas empêcher l'écran de s'afficher.
+    alertes = await api.alertes().catch(() => []);
   } catch (err) {
     // Hors ligne : on affiche le dernier état connu plutôt qu'un écran vide.
     // Toute autre erreur remonte normalement.
@@ -328,6 +335,11 @@ async function vueAccueil() {
     ${stats.incidents_ouverts > 0 && session.peut('chef') ? `
       <a class="message attention" href="/incidents" style="display:block;text-decoration:none">
         ${stats.incidents_ouverts} incident${stats.incidents_ouverts > 1 ? 's' : ''} en attente de traitement
+      </a>` : ''}
+    ${alertes.length ? `
+      <a class="message ${alertes.some((a) => a.gravite === 'depassee') ? 'erreur' : 'attention'}"
+         href="/alertes" style="display:block;text-decoration:none">
+        ${resumeAlertes(alertes)}
       </a>` : ''}
     <div class="filtres" role="tablist">
       ${filtres.map(([v, l]) => `
@@ -555,8 +567,13 @@ async function misEnAttentePrise(donnees, v) {
 
 // --- Restitution -----------------------------------------------------------
 
+// photosPreparees : images réduites en attente d'envoi, remplies à la
+// sélection et consommées à la validation de la restitution.
+let photosPreparees = [];
+
 async function vueRestitution(checkoutId) {
   chargement();
+  photosPreparees = [];
 
   let c;
   try {
@@ -640,6 +657,14 @@ async function vueRestitution(checkoutId) {
             <p class="aide">Un incident « immobilisant » place automatiquement le
               véhicule en maintenance : il ne pourra plus être pris en compte.</p>
           </div>
+          <div class="champ" style="margin-bottom:0">
+            <label for="inc-photos">Photos</label>
+            <input type="file" id="inc-photos" accept="image/*" capture="environment" multiple>
+            <p class="aide">Un constat sans photo pèse peu face à un assureur.
+              Les images sont réduites et leurs données de localisation retirées
+              avant envoi.</p>
+            <div id="apercu-photos" class="galerie"></div>
+          </div>
         </div>
       </div>
 
@@ -659,6 +684,26 @@ async function vueRestitution(checkoutId) {
   const blocIncident = app.querySelector('#bloc-incident');
   caseIncident.addEventListener('change', () => {
     blocIncident.hidden = !caseIncident.checked;
+  });
+
+  // Les photos sont préparées dès la sélection : l'agent voit tout de suite ce
+  // qu'il a cadré, et l'envoi au moment de valider n'en est que plus rapide.
+  const champPhotos = app.querySelector('#inc-photos');
+  const apercu = app.querySelector('#apercu-photos');
+  champPhotos.addEventListener('change', async () => {
+    photosPreparees = [];
+    apercu.innerHTML = '<p class="discret">Préparation…</p>';
+    const rendus = [];
+    for (const fichier of champPhotos.files) {
+      try {
+        const blob = await preparerPhoto(fichier);
+        photosPreparees.push(blob);
+        rendus.push(`<img src="${URL.createObjectURL(blob)}" alt="">`);
+      } catch (err) {
+        rendus.push(`<p class="discret">${esc(err.message)}</p>`);
+      }
+    }
+    apercu.innerHTML = rendus.join('');
   });
 
   form.addEventListener('submit', async (e) => {
@@ -701,10 +746,34 @@ async function envoyerRetour(form, c, force) {
   }
 
   try {
-    const fin = await api.restituer(c.id, { ...corps, cle_client: nouvelleCle() });
+    const reponse = await api.restituer(c.id, { ...corps, cle_client: nouvelleCle() });
+    const fin = reponse.prise || reponse;
+    const incidentID = (reponse.incidents_crees || [])[0];
+
+    // Les photos partent après coup : l'incident n'existe qu'une fois la
+    // restitution enregistrée. Un échec d'envoi ne doit pas remettre en cause
+    // la restitution elle-même, qui, elle, a abouti.
+    let echecPhotos = 0;
+    if (incidentID && photosPreparees.length) {
+      for (const blob of photosPreparees) {
+        try {
+          await envoyerPhoto(incidentID, blob);
+        } catch {
+          echecPhotos += 1;
+        }
+      }
+    }
+    photosPreparees = [];
+
     await aller('/');
-    poserMessage('succes',
-      `${fin.vehicle_code} restitué — ${nombre(fin.distance_km)} km parcourus.`);
+    if (echecPhotos) {
+      poserMessage('attention',
+        `${fin.vehicle_code} restitué, mais ${echecPhotos} photo(s) n'ont pas pu être envoyées. `
+        + `Ajoutez-les depuis la fiche du véhicule.`);
+    } else {
+      poserMessage('succes',
+        `${fin.vehicle_code} restitué — ${nombre(fin.distance_km)} km parcourus.`);
+    }
   } catch (err) {
     if (err instanceof ErreurAPI && err.statut === 0) {
       return misEnAttenteRetour(corps, c);
@@ -922,6 +991,7 @@ async function vueFicheVehicule(id) {
             <div class="val" style="font-weight:400">${esc(i.description)}</div>
             <div class="discret" style="margin-top:5px">
               Signalé par ${esc(i.user_nom)} le ${dateHeure(i.created_at)}</div>
+            ${galeriePhotos(i.photos)}
             ${chef ? `<button class="btn secondaire compact" style="margin-top:9px"
               data-action="resoudre" data-id="${i.id}">Marquer comme résolu</button>` : ''}
           </div>`).join('')}
@@ -984,6 +1054,37 @@ async function vueFicheVehicule(id) {
       });
     }
   });
+}
+
+// galeriePhotos rend les vignettes d'un constat. Les images ne peuvent pas
+// être pointées directement par une balise <img src> : l'API exige un en-tête
+// d'authentification. Elles sont donc chargées ensuite par chargerVignettes.
+function galeriePhotos(photos) {
+  if (!photos || !photos.length) return '';
+  return `<div class="galerie">${photos.map((p) =>
+    `<img data-photo="${p.id}" alt="Photo du constat" loading="lazy">`).join('')}</div>`;
+}
+
+async function chargerVignettes() {
+  for (const img of app.querySelectorAll('img[data-photo]')) {
+    if (img.dataset.chargee) continue;
+    img.dataset.chargee = '1';
+    try {
+      img.src = await urlPhoto(img.dataset.photo);
+    } catch {
+      img.replaceWith(Object.assign(document.createElement('p'),
+        { className: 'discret', textContent: 'Photo indisponible' }));
+    }
+  }
+}
+
+function resumeAlertes(alertes) {
+  const depassees = alertes.filter((a) => a.gravite === 'depassee').length;
+  if (depassees) {
+    return `${depassees} échéance${depassees > 1 ? 's' : ''} dépassée${depassees > 1 ? 's' : ''}`
+      + ` sur ${alertes.length} à traiter`;
+  }
+  return `${alertes.length} échéance${alertes.length > 1 ? 's' : ''} à prévoir`;
 }
 
 function ligneHistorique(c) {
@@ -1319,6 +1420,7 @@ async function vueIncidents() {
             ${esc(LIBELLES_GRAVITE[i.gravite] || i.gravite)}</span>
         </div>
         <p style="margin-bottom:12px">${esc(i.description)}</p>
+        ${galeriePhotos(i.photos)}
         <div class="duo" style="margin-bottom:0">
           <a class="btn secondaire compact" href="/vehicule/${i.vehicle_id}"
              style="width:100%">Voir le véhicule</a>
@@ -1585,6 +1687,64 @@ async function vueFileAttente() {
   });
 }
 
+
+
+// --- Échéances --------------------------------------------------------------
+
+// Les dates de contrôle technique et les seuils de révision étaient enregistrés
+// et affichés sur chaque fiche, mais rien ne les signalait à l'avance :
+// l'échéance se découvrait le jour où le véhicule devenait inutilisable.
+
+const LIBELLES_ALERTE = {
+  controle_technique: 'Contrôle technique',
+  revision: 'Révision',
+};
+
+async function vueAlertes() {
+  chargement();
+  const alertes = await api.alertes();
+  const depassees = alertes.filter((a) => a.gravite === 'depassee');
+  const proches = alertes.filter((a) => a.gravite === 'proche');
+
+  const carte = (a) => `
+    <article class="carte" data-action="fiche" data-id="${a.vehicule_id}">
+      <div class="entre-deux">
+        <div class="pile">
+          <strong>${esc(a.code)}${a.modele ? ` — ${esc(a.modele)}` : ''}</strong>
+          <span class="discret">${esc(a.message)}</span>
+          ${a.echeance ? `<span class="discret">Échéance : ${dateCourte(a.echeance)}</span>` : ''}
+        </div>
+        <span class="badge ${a.gravite === 'depassee' ? 'hors_service' : 'maintenance'}">
+          ${esc(LIBELLES_ALERTE[a.type] || a.type)}</span>
+      </div>
+    </article>`;
+
+  poser(`
+    ${retour('/', 'Retour au tableau de bord')}
+    <header class="entete">
+      <h1>Échéances</h1>
+      <p class="sous-titre">Contrôles techniques et révisions à programmer</p>
+    </header>
+    <div id="zone-message"></div>
+    ${depassees.length ? `
+      <h2 style="margin:0 0 10px">Dépassées</h2>
+      ${depassees.map(carte).join('')}` : ''}
+    ${proches.length ? `
+      <h2 style="margin:${depassees.length ? '22px' : '0'} 0 10px">À prévoir</h2>
+      ${proches.map(carte).join('')}` : ''}
+    ${alertes.length ? '' : vide("Aucune échéance à signaler. Le parc est à jour.", icones.calendrier)}
+    <p class="discret" style="margin-top:18px;text-align:center">
+      Un contrôle technique est signalé ${JOURS_PREAVIS_CT} jours avant son échéance,
+      une révision ${nombre(KM_PREAVIS_REVISION)} km avant le seuil saisi.</p>`);
+
+  surClic(async (action, data) => {
+    if (action === 'fiche') aller(`/vehicule/${data.id}`);
+  });
+}
+
+// Valeurs alignées sur celles du serveur, à titre d'information.
+const JOURS_PREAVIS_CT = 30;
+const KM_PREAVIS_REVISION = 1000;
 
 // --- Conservation des données ------------------------------------------------
 

@@ -328,3 +328,21 @@ textarea { resize: vertical; min-height: 82px; }
 .bandeau.attente { background: var(--ambre-fond); color: var(--ambre-texte); }
 .bandeau strong { font-weight: 700; }
 .bandeau.refus { background: var(--rouge-fond); color: var(--rouge-texte); }
+
+/* --- Photos de constat --- */
+
+.galerie {
+  display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;
+}
+.galerie img {
+  width: 92px; height: 92px; object-fit: cover;
+  border-radius: 9px; border: 1px solid var(--bordure);
+  background: var(--gris-fond); cursor: zoom-in;
+}
+.galerie img:hover { border-color: var(--marine); }
+
+input[type=file] {
+  width: 100%; padding: 11px;
+  border: 1px dashed var(--bordure); border-radius: 10px;
+  background: var(--carte); color: var(--texte); font-size: .95rem; font-family: inherit;
+}

@@ -276,6 +276,52 @@ physiquement pris le véhicule, et lui seul peut trancher.
 `type` : `dommage`, `panne`, `proprete`, `carburant`, `equipement`, `autre`.
 `gravite` : `mineur`, `majeur`, `immobilisant`.
 
+## Photos de constat
+
+| Route | Rôle | Description |
+|---|---|---|
+| `POST /incidents/{id}/photos` | agent | Joint une photo à un incident |
+| `GET /photos/{id}` | agent | Sert le fichier |
+| `DELETE /photos/{id}` | chef | Supprime la photo et son fichier |
+
+L'envoi se fait en `multipart/form-data`, champ `photo`. Maximum 8 Mo.
+
+Le format est déterminé **en lisant l'en-tête du fichier**, jamais d'après le
+type annoncé : un client peut déclarer `image/jpeg` et envoyer autre chose. Les
+formats acceptés sont JPEG, PNG et WebP ; tout autre contenu reçoit
+`422 format_invalide`.
+
+Les photos sont jointes à chaque incident renvoyé par `GET /incidents` et par
+`GET /vehicules/{id}`, dans un tableau `photos` — vide, jamais nul.
+
+`POST /prises/{id}/restitution` renvoie les identifiants des incidents créés,
+pour permettre d'y attacher les photos aussitôt :
+
+```json
+{"prise": {…}, "incidents_crees": [42]}
+```
+
+**Note pour une application mobile** : réduisez et réencodez l'image avant
+envoi. Cela retire les métadonnées EXIF, dont les coordonnées GPS, qui n'ont
+pas à figurer dans un constat de carrosserie.
+
+## Échéances
+
+| Route | Rôle | Description |
+|---|---|---|
+| `GET /alertes` | agent | Contrôles techniques et révisions dépassés ou proches |
+
+```json
+[{"vehicule_id": 1, "code": "TV1", "modele": "Peugeot 5008",
+  "type": "controle_technique", "gravite": "depassee",
+  "echeance": "2026-08-26", "jours_restants": -8,
+  "message": "Contrôle technique dépassé depuis 8 jours"}]
+```
+
+`type` vaut `controle_technique` ou `revision`, `gravite` vaut `depassee` ou
+`proche`. Un contrôle technique est signalé 30 jours avant son échéance, une
+révision 1 000 km avant le seuil. Les véhicules archivés sont exclus.
+
 ## Entretiens
 
 | Route | Rôle | Description |

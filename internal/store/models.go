@@ -94,8 +94,9 @@ type Incident struct {
 	CreatedAt   string `json:"created_at"`
 	CleClient   string `json:"-"` // idempotence des signalements différés
 
-	VehicleCode string `json:"vehicle_code,omitempty"`
-	UserNom     string `json:"user_nom,omitempty"`
+	VehicleCode string  `json:"vehicle_code,omitempty"`
+	UserNom     string  `json:"user_nom,omitempty"`
+	Photos      []Photo `json:"photos"`
 }
 
 type Maintenance struct {

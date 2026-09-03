@@ -314,6 +314,39 @@ sorties, état du parc, incidents, entretiens et coûts. Les fichiers s'ouvrent
 directement dans Excel ou LibreOffice en configuration française, accents et
 montants compris.
 
+### Photos de constat
+
+Un agent joint des photos au signalement d'un incident, au moment de la
+restitution ou depuis la fiche du véhicule. Sur téléphone, le bouton ouvre
+directement l'appareil photo.
+
+**Les images sont réduites et réencodées dans le navigateur avant envoi.** Cela
+supprime les métadonnées EXIF, dont les coordonnées GPS : une photo prise avec
+un téléphone de service porte la position exacte de l'intervention, qui n'a
+rien à faire dans un constat de carrosserie. Au passage, une photo de 4 Mo
+tombe sous 100 Ko, ce qui compte en bord de route.
+
+Le serveur vérifie le format en lisant l'en-tête du fichier, jamais le type
+annoncé par le client. Les fichiers sont stockés dans `<data>/photos` sous un
+nom aléatoire, en `0600`, et ne sont servis qu'à un utilisateur authentifié.
+Seul un chef peut en supprimer une : une pièce de constat ne doit pas
+disparaître sur décision d'un seul agent.
+
+Les photos sont **hors des sauvegardes quotidiennes** : recopier plusieurs
+gigaoctets d'images chaque jour n'est pas tenable. Elles étant immuables, une
+synchronisation du dossier de données suffit — c'est ce que fait la commande
+`rsync` donnée plus haut.
+
+### Échéances
+
+Le tableau de bord signale les contrôles techniques et révisions à programmer,
+et l'écran **Échéances** les détaille. Un contrôle technique est annoncé 30
+jours avant, une révision 1 000 km avant le seuil saisi sur la fiche du
+véhicule. Sans date ni seuil renseigné, rien n'est signalé.
+
+Pour ajuster ces seuils, modifiez `PreavisCTJours` et `PreavisRevisionKM` dans
+[`internal/store/alertes.go`](internal/store/alertes.go).
+
 ### Étiquettes QR
 
 Depuis la fiche d'un véhicule, un chef génère l'étiquette PNG à imprimer et
@@ -446,9 +479,9 @@ annexe du texte.
   mais n'a pas pu être testée : le navigateur d'intégration utilisé pendant le
   développement refuse les service workers. La file d'attente hors ligne, elle,
   est testée et fonctionne. À valider sur un vrai téléphone avant déploiement.
-- **Pas de photos.** On ne peut pas joindre de cliché à un constat de dommage.
-- **Pas de notifications** d'échéance de contrôle technique ou de révision : les
-  dates sont enregistrées et affichées, mais rien ne les rappelle.
+- **Les échéances ne sont pas notifiées hors de l'application.** Elles sont
+  signalées à l'ouverture, mais aucun courriel ni message n'est envoyé : un
+  service qui n'ouvre pas l'application ne verra rien.
 - **Obligations RGPD à traiter avant déploiement.** L'application trace
   nominativement l'activité d'agents publics : inscription au registre des
   traitements, information des agents, et consultation des instances

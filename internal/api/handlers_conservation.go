@@ -88,6 +88,14 @@ func (s *Server) postPurger(w http.ResponseWriter, r *http.Request) {
 		erreurStore(w, err)
 		return
 	}
+	// Les photos des incidents purgés doivent disparaître du disque avec eux :
+	// ce sont elles qui portent le plus de données personnelles.
+	if n, err := store.BalayerPhotosOrphelines(s.st, s.dossierPhotos()); err != nil {
+		s.log.Error("balayage des photos après purge", "erreur", err)
+	} else if n > 0 {
+		s.log.Info("photos orphelines supprimées", "nombre", n)
+	}
+
 	// La purge efface le journal d'audit : cette entrée est écrite après, pour
 	// qu'elle survive à l'opération qu'elle relate.
 	s.st.Audit(u.ID, "purge_manuelle", "settings", 0, formatBilan(bilan), s.ipDe(r))

@@ -111,6 +111,7 @@ export const api = {
     }),
 
   stats: () => requete('GET', '/stats'),
+  alertes: () => requete('GET', '/alertes'),
   vehicules: (statut) =>
     requete('GET', `/vehicules${statut && statut !== 'tous' ? `?statut=${statut}` : ''}`),
   vehicule: (id) => requete('GET', `/vehicules/${id}`),

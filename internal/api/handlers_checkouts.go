@@ -228,6 +228,9 @@ func (s *Server) postRestitution(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Les identifiants des incidents créés sont renvoyés : le client s'en sert
+	// pour y joindre les photos prises au moment du constat.
+	incidentsCrees := []int64{}
 	for _, inc := range req.Incidents {
 		if strings.TrimSpace(inc.Description) == "" {
 			continue
@@ -239,7 +242,9 @@ func (s *Server) postRestitution(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.st.CreateIncident(i); err != nil {
 			s.log.Error("enregistrement d'un incident au retour", "erreur", err, "checkout", c.ID)
+			continue
 		}
+		incidentsCrees = append(incidentsCrees, i.ID)
 	}
 
 	details := fmt.Sprintf("%s à %d km", c.VehicleCode, *req.KM)
@@ -247,7 +252,10 @@ func (s *Server) postRestitution(w http.ResponseWriter, r *http.Request) {
 		details += fmt.Sprintf(" (%d km parcourus)", *c.Distance)
 	}
 	s.st.Audit(u.ID, "restitution", "checkout", c.ID, details, s.ipDe(r))
-	ecrireJSON(w, http.StatusOK, c)
+	ecrireJSON(w, http.StatusOK, map[string]any{
+		"prise":           c,
+		"incidents_crees": incidentsCrees,
+	})
 }
 
 // --- Incidents ---

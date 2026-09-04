@@ -346,3 +346,32 @@ input[type=file] {
   border: 1px dashed var(--bordure); border-radius: 10px;
   background: var(--carte); color: var(--texte); font-size: .95rem; font-family: inherit;
 }
+
+/* --- Codes de secours --- */
+
+.codes-secours {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+}
+.codes-secours span {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1rem; font-weight: 600; letter-spacing: .04em;
+  padding: 10px; background: var(--gris-fond); border-radius: 8px;
+  text-align: center; user-select: all;
+}
+
+/* À l'impression, seuls les codes comptent : ni navigation ni boutons. */
+@media print {
+  .nav, .btn, .bandeau, .retour { display: none !important; }
+  .carte { border: 0; box-shadow: none; }
+  body { background: #fff; }
+}
+
+/* La clé TOTP fait 32 caractères, contre 14 pour un mot de passe provisoire :
+   elle doit pouvoir se replier plutôt que déborder du cadre. */
+.cle-totp {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1rem; font-weight: 700; letter-spacing: .12em;
+  padding: 14px; background: var(--gris-fond); border-radius: 10px;
+  text-align: center; user-select: all;
+  word-break: break-all; line-height: 1.7;
+}

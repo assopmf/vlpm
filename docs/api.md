@@ -387,6 +387,59 @@ emploient la virgule décimale, seule forme qu'Excel y reconnaît comme un nombr
 Filtres : `vehicule` sur les quatre, `statut`, `depuis` et `jusqua` sur
 `prises.csv`, `statut` sur `incidents.csv`, `archives=1` sur `parc.csv`.
 
+## Second facteur
+
+Codes TOTP conformes à la RFC 6238 : HMAC-SHA1, pas de 30 secondes, 6
+chiffres, tolérance d'un pas de part et d'autre.
+
+| Route | Rôle | Description |
+|---|---|---|
+| `GET /moi/totp` | agent | État du second facteur pour le compte courant |
+| `POST /moi/totp/preparer` | agent | Tire un secret, renvoie l'URI `otpauth://` |
+| `GET /moi/totp/qrcode.png` | agent | QR d'inscription (uniquement avant activation) |
+| `POST /moi/totp/activer` | agent | Valide un premier code, renvoie les codes de secours |
+| `DELETE /moi/totp` | agent | Retire le second facteur (mot de passe exigé) |
+| `GET /securite/totp` | admin | Politique du service |
+| `PATCH /securite/totp` | admin | Modifie la politique |
+| `POST /agents/{id}/totp/reinitialiser` | admin | Débloque un agent ayant tout perdu |
+
+### Connexion
+
+Quand le compte porte un second facteur actif, `POST /auth/login` répond
+`401 totp_requis` si `code_totp` est absent. Le mot de passe était alors
+correct : redemandez seulement le code, sans réinitialiser le formulaire.
+
+```json
+{"matricule": "0801", "mot_de_passe": "…", "code_totp": "123456"}
+```
+
+Le champ accepte aussi un **code de secours** (`ABCDE-FGHIJ`), reconnu à son
+tiret et consommé définitivement.
+
+Le mot de passe est vérifié **avant** le code : un code valide accompagné d'un
+mauvais mot de passe renvoie `identifiants`, sans révéler que le compte porte
+un second facteur.
+
+Un `401 totp_requis` **ne compte pas** comme tentative échouée — un agent
+mettant dix secondes à sortir son téléphone épuiserait sinon son quota. Un
+`401 totp_invalide`, si.
+
+Un code déjà employé est refusé pendant sa fenêtre de validité : le dernier pas
+accepté est mémorisé, ce qui interdit de rejouer un code lu par-dessus
+l'épaule.
+
+### Politique
+
+`PATCH /securite/totp` accepte `desactive`, `facultatif` ou
+`obligatoire_chefs`. Le mode obligatoire est **refusé avec
+`409 totp_auteur_manquant`** si l'administrateur qui le demande n'a pas
+lui-même de second facteur actif : il se verrouillerait dehors.
+
+Les comptes `agent` ne sont jamais soumis au mode obligatoire.
+
+**Note pour une application mobile** : traitez `totp_requis` comme une seconde
+étape du formulaire de connexion, en conservant le mot de passe déjà saisi.
+
 ## Conservation des données
 
 Durées au-delà desquelles les données sont supprimées définitivement. Réservé

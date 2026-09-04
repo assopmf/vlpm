@@ -14,6 +14,10 @@ import (
 type requeteLogin struct {
 	Matricule  string `json:"matricule"`
 	MotDePasse string `json:"mot_de_passe"`
+	// Code d'authentification, ou code de secours, quand le compte porte un
+	// second facteur. L'interface le demande dans un second temps, après un
+	// refus explicite : elle n'a pas à savoir d'avance qui en est équipé.
+	CodeTOTP string `json:"code_totp"`
 }
 
 type reponseLogin struct {
@@ -52,10 +56,31 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, token, err := s.auth.Login(req.Matricule, req.MotDePasse, r.UserAgent(), ip)
+	u, token, err := s.auth.Login(req.Matricule, req.MotDePasse, req.CodeTOTP, r.UserAgent(), ip)
 	if err != nil {
 		if errors.Is(err, auth.ErrCompteInactif) {
 			erreur(w, http.StatusForbidden, "Ce compte est désactivé. Contactez votre responsable.", "compte_inactif")
+			return
+		}
+		// Le mot de passe était bon mais le second facteur manque : on le
+		// réclame sans compter l'échec, sinon un agent qui met dix secondes à
+		// sortir son téléphone épuiserait son quota de tentatives.
+		if errors.Is(err, store.ErrTOTPRequis) {
+			erreur(w, http.StatusUnauthorized,
+				"Saisissez le code affiché par votre application d'authentification.",
+				"totp_requis")
+			return
+		}
+		if errors.Is(err, store.ErrTOTPInvalide) || errors.Is(err, store.ErrTOTPRejeu) {
+			if err := s.st.EnregistrerEchec(req.Matricule, ip); err != nil {
+				s.log.Warn("enregistrement d'une tentative échouée", "erreur", err)
+			}
+			s.st.Audit(0, "login_totp_echec", "user", 0, "matricule="+req.Matricule, ip)
+			message := "Code d'authentification incorrect."
+			if errors.Is(err, store.ErrTOTPRejeu) {
+				message = "Ce code a déjà servi. Attendez le suivant."
+			}
+			erreur(w, http.StatusUnauthorized, message, "totp_invalide")
 			return
 		}
 		if errors.Is(err, auth.ErrIdentifiants) {

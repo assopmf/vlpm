@@ -39,6 +39,7 @@ const routes = [
   [/^\/conservation$/, () => vueConservation()],
   [/^\/reglages$/, () => vueReglages()],
   [/^\/appareils$/, () => vueAppareils()],
+  [/^\/securite$/, () => vueSecurite()],
   [/^\/attente$/, () => vueFileAttente()],
 ];
 
@@ -214,6 +215,14 @@ function vueConnexion() {
           <input type="password" id="motdepasse" name="password"
                  autocomplete="current-password" required>
         </div>
+        <div class="champ" id="champ-totp" hidden>
+          <label for="codetotp">Code d'authentification</label>
+          <input type="text" id="codetotp" name="one-time-code"
+                 inputmode="numeric" autocomplete="one-time-code"
+                 maxlength="11" placeholder="123456">
+          <p class="aide">Code à six chiffres de votre application
+            d'authentification, ou l'un de vos codes de secours.</p>
+        </div>
         <button class="btn" type="submit">Se connecter</button>
       </form>
     </div>`, { nav: false });
@@ -225,7 +234,8 @@ function vueConnexion() {
     await enAttente(bouton, async () => {
       try {
         const rep = await api.connexion(
-          form.matricule.value.trim(), form.motdepasse.value);
+          form.matricule.value.trim(), form.motdepasse.value,
+          app.querySelector('#codetotp').value);
         session.ouvrir(rep.token, rep.user);
         const destination = sessionStorage.getItem('vlpm.destination');
         sessionStorage.removeItem('vlpm.destination');
@@ -237,9 +247,29 @@ function vueConnexion() {
         }
         await aller(destination || '/');
       } catch (err) {
+        const champTOTP = app.querySelector('#champ-totp');
+        const codeTOTP = app.querySelector('#codetotp');
+
+        // Le compte porte un second facteur : on révèle le champ sans effacer
+        // le mot de passe déjà saisi, qui était bon.
+        if (err.code === 'totp_requis') {
+          champTOTP.hidden = false;
+          codeTOTP.focus();
+          poserMessage('info', err.message);
+          return;
+        }
+        if (err.code === 'totp_invalide') {
+          champTOTP.hidden = false;
+          codeTOTP.value = '';
+          codeTOTP.focus();
+          poserMessage('erreur', err.message);
+          return;
+        }
         poserMessage('erreur', err.message);
         form.motdepasse.value = '';
-        form.motdepasse.focus();
+        codeTOTP.value = '';
+        champTOTP.hidden = true;
+        form.matricule.focus();
       }
     });
   });
@@ -1750,6 +1780,182 @@ const KM_PREAVIS_REVISION = 1000;
 
 
 
+
+// --- Second facteur ----------------------------------------------------------
+
+// Le projet s'adressant à des collectivités dont les réseaux diffèrent, aucune
+// politique n'est imposée : chaque commune choisit, et le mode reste désactivé
+// tant que personne ne l'a décidé.
+
+const MODES_TOTP = [
+  ['desactive', 'Désactivé — mot de passe seul'],
+  ['facultatif', 'Facultatif — chacun l\'active s\'il le souhaite'],
+  ['obligatoire_chefs', 'Obligatoire pour les chefs et administrateurs'],
+];
+
+async function vueSecurite() {
+  chargement();
+  const etat = await api.totp();
+  const admin = session.peut('admin');
+  const politique = admin ? await api.modeTOTP().catch(() => null) : null;
+
+  poser(`
+    ${retour('/reglages', 'Retour aux réglages')}
+    <header class="entete">
+      <h1>Second facteur</h1>
+      <p class="sous-titre">Un code à six chiffres en plus du mot de passe</p>
+    </header>
+    <div id="zone-message"></div>
+
+    <div class="carte">
+      <div class="entre-deux" style="margin-bottom:12px">
+        <div class="pile">
+          <strong>${etat.actif ? 'Activé sur votre compte' : 'Non configuré'}</strong>
+          ${etat.actif ? `<span class="discret">${etat.codes_secours_restants}
+            code(s) de secours restant(s)</span>` : ''}
+          ${etat.exige && !etat.actif
+            ? '<span class="discret">Votre service l\'impose pour votre rôle.</span>' : ''}
+        </div>
+        <span class="badge ${etat.actif ? 'disponible' : 'maintenance'}">
+          ${etat.actif ? 'Actif' : 'Inactif'}</span>
+      </div>
+      ${etat.actif
+        ? (etat.exige
+            ? `<p class="discret">Il ne peut pas être retiré tant que votre service l'impose.</p>`
+            : `<button class="btn secondaire" data-action="desactiver">Désactiver</button>`)
+        : `<button class="btn" data-action="configurer">Configurer maintenant</button>`}
+    </div>
+    <div id="inscription"></div>
+
+    ${admin && politique ? `
+      <div class="carte">
+        <h2 style="margin-bottom:10px">Politique du service</h2>
+        <div class="champ" style="margin-bottom:0">
+          <label for="mode">Second facteur</label>
+          <select id="mode">
+            ${MODES_TOTP.map(([v, l]) =>
+              `<option value="${v}"${v === politique.mode ? ' selected' : ''}>${l}</option>`).join('')}
+          </select>
+          <p class="aide">
+            ${politique.responsables_avec_totp} responsable(s) sur
+            ${politique.responsables_total} l'ont configuré.
+            Le mode obligatoire ne s'applique jamais aux agents : le leur imposer
+            à chaque prise de service gênerait sans réel bénéfice.</p>
+        </div>
+      </div>` : ''}
+
+    ${message('info', "Le code protège la connexion, pas la session ouverte. "
+      + "Si un téléphone déjà connecté est perdu, coupez sa session depuis "
+      + "« Mes appareils connectés ».")}`);
+
+  const mode = app.querySelector('#mode');
+  if (mode) {
+    mode.addEventListener('change', async () => {
+      try {
+        await api.definirModeTOTP(mode.value);
+        await vueSecurite();
+        poserMessage('succes', 'Politique enregistrée.');
+      } catch (err) {
+        await vueSecurite();
+        poserMessage('erreur', err.message);
+      }
+    });
+  }
+
+  surClic(async (action, data, e, cible) => {
+    if (action === 'configurer') {
+      await enAttente(cible, lancerInscriptionTOTP);
+    } else if (action === 'desactiver') {
+      const mdp = prompt("Confirmez votre mot de passe pour désactiver le second facteur :");
+      if (!mdp) return;
+      try {
+        await api.desactiverTOTP(mdp);
+        await vueSecurite();
+        poserMessage('succes', 'Second facteur désactivé.');
+      } catch (err) {
+        poserMessage('erreur', err.message);
+      }
+    }
+  });
+}
+
+async function lancerInscriptionTOTP() {
+  const bloc = app.querySelector('#inscription');
+  bloc.innerHTML = '<div class="carte"><p class="discret">Préparation…</p></div>';
+  let prep;
+  try {
+    prep = await api.preparerTOTP();
+  } catch (err) {
+    bloc.innerHTML = message('erreur', err.message);
+    return;
+  }
+
+  // Le QR passe par fetch pour porter l'en-tête d'authentification : une
+  // balise <img src> nue serait refusée par l'API.
+  let urlQR = '';
+  try {
+    const rep = await fetch('/api/v1/moi/totp/qrcode.png', {
+      headers: { Authorization: `Bearer ${session.jeton()}` },
+    });
+    if (rep.ok) urlQR = URL.createObjectURL(await rep.blob());
+  } catch {
+    // Sans QR, la saisie manuelle du secret reste possible.
+  }
+
+  bloc.innerHTML = `
+    <div class="carte">
+      <h2 style="margin-bottom:12px">1. Scannez ce code</h2>
+      ${urlQR ? `<img class="qr-apercu" src="${urlQR}" alt="Code à scanner">` : ''}
+      <p class="discret" style="margin-bottom:10px">
+        Avec Google Authenticator, FreeOTP, Aegis ou votre gestionnaire de mots de passe.</p>
+      <p class="discret" style="margin-bottom:6px">Ou saisissez cette clé à la main :</p>
+      <div class="cle-totp">${esc(prep.secret)}</div>
+
+      <h2 style="margin:20px 0 12px">2. Saisissez le code affiché</h2>
+      <form id="form-totp">
+        <div class="champ">
+          <input type="text" id="code-totp" inputmode="numeric" maxlength="6"
+                 placeholder="123456" autocomplete="one-time-code" required>
+          <p class="aide">Si le code est refusé, vérifiez que l'heure de votre
+            téléphone est réglée automatiquement.</p>
+        </div>
+        <button class="btn" type="submit">Activer le second facteur</button>
+      </form>
+    </div>`;
+
+  const form = bloc.querySelector('#form-totp');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await enAttente(form.querySelector('button'), async () => {
+      try {
+        const r = await api.activerTOTP(bloc.querySelector('#code-totp').value);
+        afficherCodesSecours(r.codes_secours, r.avertissement);
+      } catch (err) {
+        poserMessage('erreur', err.message);
+      }
+    });
+  });
+  bloc.querySelector('#code-totp').focus();
+}
+
+function afficherCodesSecours(codes, avertissement) {
+  poser(`
+    <header class="entete"><h1>Codes de secours</h1></header>
+    <div class="carte">
+      ${message('attention', avertissement)}
+      <div class="codes-secours">
+        ${codes.map((c) => `<span>${esc(c)}</span>`).join('')}
+      </div>
+      <button class="btn secondaire" data-action="imprimer"
+              style="margin-top:14px">Imprimer</button>
+    </div>
+    <a class="btn" href="/securite">J'ai noté ces codes</a>`);
+
+  surClic((action) => {
+    if (action === 'imprimer') window.print();
+  });
+}
+
 // --- Appareils connectés -----------------------------------------------------
 
 // Un jeton reste valable douze heures. Sans cet écran, un téléphone perdu
@@ -2154,8 +2360,11 @@ async function vueReglages() {
       <a class="btn secondaire" href="/conservation" style="margin-bottom:12px">
         ${icones.bouclier} Conservation des données</a>` : ''}
 
+    <a class="btn secondaire" href="/securite" style="margin-bottom:12px">
+      ${icones.bouclier} Second facteur d'authentification</a>
+
     <a class="btn secondaire" href="/appareils" style="margin-bottom:12px">
-      ${icones.bouclier} Mes appareils connectés</a>
+      ${icones.agent} Mes appareils connectés</a>
 
     <button class="btn danger" data-action="deconnexion">${icones.sortie} Se déconnecter</button>`);
 

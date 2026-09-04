@@ -10,12 +10,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"unicode"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/assopmf/vlpm/internal/store"
+	"github.com/assopmf/vlpm/internal/totp"
 )
 
 var (
@@ -70,7 +72,11 @@ type Service struct {
 func New(st *store.Store) *Service { return &Service{st: st} }
 
 // Login vérifie les identifiants et ouvre une session.
-func (s *Service) Login(matricule, motDePasse, userAgent, ip string) (*store.User, string, error) {
+//
+// codeTOTP n'est examiné que si le compte porte un second facteur actif. Il
+// est vérifié après le mot de passe : un code seul ne doit rien apprendre, et
+// un compte sans mot de passe valide n'a pas à révéler qu'il est protégé.
+func (s *Service) Login(matricule, motDePasse, codeTOTP, userAgent, ip string) (*store.User, string, error) {
 	u, err := s.st.UserByMatricule(matricule)
 	if err != nil {
 		// On compare quand même contre un hash factice valide : sans cela, un
@@ -86,6 +92,10 @@ func (s *Service) Login(matricule, motDePasse, userAgent, ip string) (*store.Use
 		return nil, "", ErrCompteInactif
 	}
 
+	if err := s.verifierSecondFacteur(u, codeTOTP); err != nil {
+		return nil, "", err
+	}
+
 	token, err := s.creerSession(u.ID, userAgent, ip)
 	if err != nil {
 		return nil, "", err
@@ -98,6 +108,39 @@ func (s *Service) Login(matricule, motDePasse, userAgent, ip string) (*store.Use
 // pour reconfirmer l'identité avant une opération sensible.
 func (s *Service) VerifierMotDePasse(u *store.User, motDePasse string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(motDePasse)) == nil
+}
+
+// verifierSecondFacteur contrôle le code d'authentification quand le compte en
+// porte un. Un code de secours est accepté à la place, et consommé.
+func (s *Service) verifierSecondFacteur(u *store.User, saisi string) error {
+	secret, actif, dernierPas, err := s.st.SecretTOTP(u.ID)
+	if err != nil {
+		return err
+	}
+	if !actif || secret == "" {
+		return nil
+	}
+	saisi = strings.TrimSpace(saisi)
+	if saisi == "" {
+		return store.ErrTOTPRequis
+	}
+
+	// Un code de secours se distingue par son tiret et sa longueur : inutile
+	// de demander à l'agent de préciser ce qu'il saisit.
+	if strings.Contains(saisi, "-") || len(saisi) > totp.Chiffres+2 {
+		return s.st.ConsommerCodeSecours(u.ID, saisi)
+	}
+
+	pas, ok := totp.Verifier(secret, saisi, time.Now())
+	if !ok {
+		return store.ErrTOTPInvalide
+	}
+	// Le même code ne doit pas servir deux fois dans sa fenêtre de validité :
+	// un code lu par-dessus l'épaule serait sinon rejouable une demi-minute.
+	if pas <= dernierPas {
+		return store.ErrTOTPRejeu
+	}
+	return s.st.MarquerPasTOTP(u.ID, pas)
 }
 
 // creerSession génère un jeton aléatoire de 256 bits. Seul son SHA-256 est

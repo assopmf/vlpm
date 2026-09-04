@@ -101,10 +101,21 @@ async function requete(methode, chemin, corps) {
 }
 
 export const api = {
-  connexion: (matricule, motDePasse) =>
-    requete('POST', '/auth/login', { matricule, mot_de_passe: motDePasse }),
+  connexion: (matricule, motDePasse, codeTOTP) =>
+    requete('POST', '/auth/login', {
+      matricule, mot_de_passe: motDePasse, code_totp: codeTOTP || '',
+    }),
   deconnexion: () => requete('POST', '/auth/logout'),
   moi: () => requete('GET', '/moi'),
+  totp: () => requete('GET', '/moi/totp'),
+  preparerTOTP: () => requete('POST', '/moi/totp/preparer'),
+  activerTOTP: (code) => requete('POST', '/moi/totp/activer', { code }),
+  desactiverTOTP: (motDePasse) =>
+    requete('DELETE', '/moi/totp', { mot_de_passe: motDePasse }),
+  modeTOTP: () => requete('GET', '/securite/totp'),
+  definirModeTOTP: (mode) => requete('PATCH', '/securite/totp', { mode }),
+  reinitialiserTOTPAgent: (id) => requete('POST', `/agents/${id}/totp/reinitialiser`),
+
   sessions: () => requete('GET', '/moi/sessions'),
   revoquerSession: (id) => requete('DELETE', `/moi/sessions/${id}`),
   revoquerAutresSessions: () => requete('POST', '/moi/sessions/revoquer-autres'),

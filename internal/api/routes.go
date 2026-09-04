@@ -39,6 +39,16 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/moi/sessions/{id}", s.authentifier(s.deleteSession))
 	mux.HandleFunc("POST /api/v1/moi/sessions/revoquer-autres", s.authentifier(s.postRevoquerAutresSessions))
 
+	// --- Second facteur ---
+	mux.HandleFunc("GET /api/v1/moi/totp", s.authentifier(s.getTOTP))
+	mux.HandleFunc("POST /api/v1/moi/totp/preparer", s.authentifier(s.postPreparerTOTP))
+	mux.HandleFunc("GET /api/v1/moi/totp/qrcode.png", s.authentifier(s.getQRCodeTOTP))
+	mux.HandleFunc("POST /api/v1/moi/totp/activer", s.authentifier(s.postActiverTOTP))
+	mux.HandleFunc("DELETE /api/v1/moi/totp", s.authentifier(s.deleteTOTP))
+	mux.HandleFunc("GET /api/v1/securite/totp", s.exiger("admin", s.getModeTOTP))
+	mux.HandleFunc("PATCH /api/v1/securite/totp", s.exiger("admin", s.patchModeTOTP))
+	mux.HandleFunc("POST /api/v1/agents/{id}/totp/reinitialiser", s.exiger("admin", s.postReinitialiserTOTPAgent))
+
 	// --- Parc ---
 	mux.HandleFunc("GET /api/v1/vehicules", s.authentifier(s.getVehicles))
 	mux.HandleFunc("GET /api/v1/vehicules/{id}", s.authentifier(s.getVehicle))

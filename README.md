@@ -263,6 +263,49 @@ d'un VPN ou d'une carte SIM du réseau de la collectivité, n'exposez l'API que
 sur ce réseau : la page de connexion devient injoignable depuis Internet, ce
 qui vaut mieux que n'importe quel durcissement.
 
+### Second facteur d'authentification
+
+Un code à six chiffres, en plus du mot de passe, changeant toutes les 30
+secondes — celui que génèrent Google Authenticator, FreeOTP, Aegis ou un
+gestionnaire de mots de passe. Rien ne circule : le téléphone et le serveur
+calculent le même code chacun de leur côté, sans réseau ni SMS.
+
+**Le projet ne tranche pas à votre place.** Une commune exposant son instance
+sur Internet en a besoin ; une autre la gardant sur un réseau interne s'en
+passera. Le mode se choisit dans **Réglages → Second facteur** :
+
+| Mode | Pour qui |
+|---|---|
+| **Désactivé** (défaut) | instance sur réseau fermé, ou service sans support informatique |
+| **Facultatif** | chacun l'active pour son propre compte |
+| **Obligatoire pour chefs et administrateurs** | instance joignable depuis Internet |
+
+Les agents ne sont **jamais** concernés par le mode obligatoire : leurs droits
+se limitent à prendre et rendre un véhicule, et leur imposer un code à chaque
+prise de service gênerait pour un gain faible. Un compte chef, lui, donne accès
+aux exports, aux comptes et à l'historique nominatif de tout le service.
+
+Trois précautions :
+
+- **Activer le mode obligatoire est refusé** tant que l'administrateur qui le
+  demande n'a pas configuré son propre second facteur — sans quoi il se
+  verrouillerait dehors à la déconnexion suivante.
+- **Dix codes de secours** sont remis à l'activation, à imprimer et ranger en
+  lieu sûr. Ils s'utilisent une fois chacun, à la place du code du téléphone.
+- **Un administrateur peut retirer le second facteur d'un agent** qui a perdu
+  téléphone et codes. Ses sessions sont alors fermées : si le téléphone a été
+  volé plutôt qu'égaré, il ne conserve aucun accès.
+
+**Attention à l'horloge.** Le calcul repose entièrement sur le temps : si celle
+du serveur dérive de plus d'une minute, plus personne ne peut se connecter.
+Vérifiez la synchronisation NTP avant d'activer, en particulier sur un
+Raspberry Pi sans pile d'horloge.
+
+**Ce que le second facteur ne protège pas** : il sécurise la connexion, pas la
+session ouverte. Un téléphone volé alors qu'il est déjà connecté le contourne
+entièrement — c'est la révocation d'appareil ci-dessous qui répond à ce cas.
+Les deux mesures sont complémentaires.
+
 ### Téléphone perdu
 
 Chaque agent voit ses appareils connectés dans **Réglages → Mes appareils

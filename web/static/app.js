@@ -38,6 +38,7 @@ const routes = [
   [/^\/journal$/, () => vueJournal()],
   [/^\/conservation$/, () => vueConservation()],
   [/^\/reglages$/, () => vueReglages()],
+  [/^\/appareils$/, () => vueAppareils()],
   [/^\/attente$/, () => vueFileAttente()],
 ];
 
@@ -1748,6 +1749,78 @@ const JOURS_PREAVIS_CT = 30;
 const KM_PREAVIS_REVISION = 1000;
 
 
+
+// --- Appareils connectés -----------------------------------------------------
+
+// Un jeton reste valable douze heures. Sans cet écran, un téléphone perdu
+// gardait l'accès jusqu'à expiration, et le seul recours était de désactiver
+// tout le compte — ce qui coupait l'agent partout et demandait un chef.
+
+async function vueAppareils() {
+  chargement();
+  const sessions = await api.sessions();
+  const autres = sessions.filter((s) => !s.actuelle).length;
+
+  poser(`
+    ${retour('/reglages', 'Retour aux réglages')}
+    <header class="entete">
+      <h1>Appareils connectés</h1>
+      <p class="sous-titre">Sessions ouvertes sur votre compte</p>
+    </header>
+    <div id="zone-message"></div>
+
+    ${message('info', "Si vous perdez un téléphone, coupez sa session ici : "
+      + "l'accès est retiré immédiatement, sans attendre l'expiration ni "
+      + "l'intervention d'un chef.")}
+
+    ${sessions.map((s) => `
+      <article class="carte">
+        <div class="entre-deux">
+          <div class="pile">
+            <strong>${esc(s.appareil)}${s.actuelle ? ' — cet appareil' : ''}</strong>
+            <span class="discret">Connecté le ${dateHeure(s.created_at)}</span>
+            ${s.ip ? `<span class="discret">Depuis ${esc(s.ip)}</span>` : ''}
+            <span class="discret">Expire le ${dateHeure(s.expires_at)}</span>
+          </div>
+          ${s.actuelle ? '<span class="badge disponible">Actuel</span>' : ''}
+        </div>
+        ${s.actuelle ? '' : `
+          <button class="btn secondaire compact" style="margin-top:12px"
+                  data-action="revoquer" data-id="${s.id}">Couper cette session</button>`}
+      </article>`).join('')}
+
+    ${autres ? `
+      <button class="btn danger" data-action="revoquer-autres" style="margin-top:8px">
+        Couper les ${autres} autre${autres > 1 ? 's' : ''} session${autres > 1 ? 's' : ''}</button>` : ''}`);
+
+  surClic(async (action, data, e, cible) => {
+    if (action === 'revoquer') {
+      if (!confirm("Couper cette session ? L'appareil devra se reconnecter.")) return;
+      await enAttente(cible, async () => {
+        try {
+          await api.revoquerSession(Number(data.id));
+          await vueAppareils();
+          poserMessage('succes', 'Session coupée.');
+        } catch (err) {
+          poserMessage('erreur', err.message);
+        }
+      });
+    } else if (action === 'revoquer-autres') {
+      if (!confirm("Couper toutes les autres sessions ? Vous resterez connecté sur cet appareil.")) return;
+      await enAttente(cible, async () => {
+        try {
+          const r = await api.revoquerAutresSessions();
+          await vueAppareils();
+          poserMessage('succes',
+            `${r.revoquees} session(s) coupée(s).`);
+        } catch (err) {
+          poserMessage('erreur', err.message);
+        }
+      });
+    }
+  });
+}
+
 // --- Relevé d'échéances par courriel -----------------------------------------
 
 // Les échéances n'étaient signalées qu'à l'ouverture de l'application : un
@@ -2080,6 +2153,9 @@ async function vueReglages() {
         ${icones.historique} Journal d'activité</a>
       <a class="btn secondaire" href="/conservation" style="margin-bottom:12px">
         ${icones.bouclier} Conservation des données</a>` : ''}
+
+    <a class="btn secondaire" href="/appareils" style="margin-bottom:12px">
+      ${icones.bouclier} Mes appareils connectés</a>
 
     <button class="btn danger" data-action="deconnexion">${icones.sortie} Se déconnecter</button>`);
 

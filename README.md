@@ -237,6 +237,41 @@ immédiatement.
 Les durées minimales acceptées sont de 12 mois pour l'activité et 6 mois pour
 le journal : en dessous, on effacerait des données de l'exercice en cours.
 
+### Exposer l'API sur Internet
+
+Connaître l'adresse de l'API ne donne accès à rien : hors la connexion et la
+sonde de santé, toute route exige un jeton obtenu par matricule et mot de
+passe. Une application mobile configurée avec la seule URL ne peut rien lire.
+
+Reste que la page de connexion, elle, est joignable. Trois protections :
+
+- **Blocage après échecs répétés**, sur l'adresse IP (10 essais par quart
+  d'heure) **et sur le matricule** (5 essais). Cette seconde limite couvre le
+  cas qu'une limite par IP laisse passer : le même compte attaqué depuis
+  plusieurs adresses. Les compteurs sont en base, donc insensibles à un
+  redémarrage du serveur.
+- **Blocage temporaire, jamais définitif.** Il se lève seul au bout d'un quart
+  d'heure. C'est un compromis assumé : quelqu'un connaissant le matricule d'un
+  agent peut le gêner pendant quinze minutes. Un verrouillage définitif serait
+  pire — il suffirait de viser tous les agents un dimanche soir pour empêcher
+  la prise de service du lundi.
+- **Réponse identique** que le matricule existe ou non, avec un temps de
+  réponse égalisé : impossible d'énumérer les comptes.
+
+**La mesure la plus efficace n'est pas applicative.** Si les agents disposent
+d'un VPN ou d'une carte SIM du réseau de la collectivité, n'exposez l'API que
+sur ce réseau : la page de connexion devient injoignable depuis Internet, ce
+qui vaut mieux que n'importe quel durcissement.
+
+### Téléphone perdu
+
+Chaque agent voit ses appareils connectés dans **Réglages → Mes appareils
+connectés**, et coupe celui qu'il a perdu. L'accès est retiré immédiatement,
+sans attendre l'expiration du jeton ni l'intervention d'un chef.
+
+Un chef garde les moyens plus radicaux : réinitialiser le mot de passe ou
+désactiver le compte ferment toutes les sessions de l'agent.
+
 ### Perte du mot de passe administrateur
 
 Il n'y a **pas d'envoi de courriel** : si le dernier administrateur perd son

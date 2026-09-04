@@ -105,6 +105,10 @@ export const api = {
     requete('POST', '/auth/login', { matricule, mot_de_passe: motDePasse }),
   deconnexion: () => requete('POST', '/auth/logout'),
   moi: () => requete('GET', '/moi'),
+  sessions: () => requete('GET', '/moi/sessions'),
+  revoquerSession: (id) => requete('DELETE', `/moi/sessions/${id}`),
+  revoquerAutresSessions: () => requete('POST', '/moi/sessions/revoquer-autres'),
+
   changerMotDePasse: (actuel, nouveau) =>
     requete('POST', '/moi/mot-de-passe', {
       mot_de_passe_actuel: actuel, nouveau_mot_de_passe: nouveau,

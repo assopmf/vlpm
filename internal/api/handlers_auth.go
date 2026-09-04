@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/assopmf/vlpm/internal/auth"
 	"github.com/assopmf/vlpm/internal/store"
@@ -33,20 +34,34 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ip := s.ipDe(r)
-	if !s.limite.autorise(ip) {
-		s.st.Audit(0, "login_bloque", "user", 0, "matricule="+req.Matricule, ip)
-		erreur(w, http.StatusTooManyRequests,
-			"Trop de tentatives de connexion. Réessayez dans quelques minutes.", "trop_de_tentatives")
+
+	// Le blocage est vérifié avant toute comparaison de mot de passe, sur
+	// l'adresse comme sur le matricule : la seule limite par IP ne voyait pas
+	// une attaque du même compte menée depuis plusieurs adresses.
+	blocage, err := s.st.ConnexionBloquee(req.Matricule, ip)
+	if err != nil {
+		erreurStore(w, err)
+		return
+	}
+	if blocage.Bloque {
+		s.st.Audit(0, "login_bloque", "user", 0,
+			"matricule="+req.Matricule+" cause="+blocage.Cause, ip)
+		erreur(w, http.StatusTooManyRequests, fmt.Sprintf(
+			"Trop de tentatives de connexion. Réessayez dans %s.",
+			delaiLisible(blocage.Restant)), "trop_de_tentatives")
 		return
 	}
 
-	u, token, err := s.auth.Login(req.Matricule, req.MotDePasse, r.UserAgent())
+	u, token, err := s.auth.Login(req.Matricule, req.MotDePasse, r.UserAgent(), ip)
 	if err != nil {
 		if errors.Is(err, auth.ErrCompteInactif) {
 			erreur(w, http.StatusForbidden, "Ce compte est désactivé. Contactez votre responsable.", "compte_inactif")
 			return
 		}
 		if errors.Is(err, auth.ErrIdentifiants) {
+			if err := s.st.EnregistrerEchec(req.Matricule, ip); err != nil {
+				s.log.Warn("enregistrement d'une tentative échouée", "erreur", err)
+			}
 			s.st.Audit(0, "login_echec", "user", 0, "matricule="+req.Matricule, ip)
 			erreur(w, http.StatusUnauthorized, "Matricule ou mot de passe incorrect.", "identifiants")
 			return
@@ -55,7 +70,9 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.limite.reussite(ip)
+	if err := s.st.EffacerEchecs(req.Matricule, ip); err != nil {
+		s.log.Warn("remise à zéro des tentatives", "erreur", err)
+	}
 	s.st.Audit(u.ID, "login", "user", u.ID, "", ip)
 	ecrireJSON(w, http.StatusOK, reponseLogin{
 		Token:      token,
@@ -334,4 +351,60 @@ func (s *Server) compterAdminsActifs() (int, error) {
 	var n int
 	err := s.st.DB.QueryRow(`SELECT COUNT(*) FROM users WHERE role='admin' AND actif=1`).Scan(&n)
 	return n, err
+}
+
+// delaiLisible met un délai en français, arrondi à la minute supérieure : une
+// consigne « réessayez dans 14 minutes » est plus utile que « dans 13m47s ».
+func delaiLisible(d time.Duration) string {
+	minutes := int(d.Round(time.Minute) / time.Minute)
+	if d > 0 && minutes < 1 {
+		minutes = 1
+	}
+	if minutes <= 1 {
+		return "une minute"
+	}
+	return fmt.Sprintf("%d minutes", minutes)
+}
+
+// --- Sessions actives ---
+
+// getSessions liste les appareils connectés au compte courant.
+func (s *Server) getSessions(w http.ResponseWriter, r *http.Request) {
+	u := utilisateurDe(r)
+	sessions, err := s.st.SessionsDeLUtilisateur(u.ID, auth.HashJeton(jetonDe(r)))
+	if err != nil {
+		erreurStore(w, err)
+		return
+	}
+	ecrireJSON(w, http.StatusOK, sessions)
+}
+
+// deleteSession coupe un appareil précis : c'est le geste à faire quand un
+// téléphone est perdu, sans attendre qu'un chef désactive tout le compte.
+func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
+	u := utilisateurDe(r)
+	id, ok := idPath(r, "id")
+	if !ok {
+		erreur(w, http.StatusBadRequest, "Identifiant invalide.", "id_invalide")
+		return
+	}
+	if err := s.st.RevoquerSession(u.ID, id); err != nil {
+		erreurStore(w, err)
+		return
+	}
+	s.st.Audit(u.ID, "session_revoquee", "session", id, "", s.ipDe(r))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// postRevoquerAutresSessions coupe tout sauf l'appareil courant.
+func (s *Server) postRevoquerAutresSessions(w http.ResponseWriter, r *http.Request) {
+	u := utilisateurDe(r)
+	n, err := s.st.RevoquerAutresSessions(u.ID, auth.HashJeton(jetonDe(r)))
+	if err != nil {
+		erreurStore(w, err)
+		return
+	}
+	s.st.Audit(u.ID, "sessions_revoquees", "user", u.ID,
+		fmt.Sprintf("%d session(s)", n), s.ipDe(r))
+	ecrireJSON(w, http.StatusOK, map[string]any{"revoquees": n})
 }

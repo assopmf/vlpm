@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/assopmf/vlpm/internal/auth"
@@ -24,14 +23,12 @@ type Server struct {
 	st       *store.Store
 	auth     *auth.Service
 	log      *slog.Logger
-	limite   *limiteur
 	courriel courriel.Expediteur // nil si aucun relais n'est configuré
 }
 
 func New(cfg config.Config, st *store.Store, a *auth.Service, log *slog.Logger,
 	exp courriel.Expediteur) *Server {
-	return &Server{cfg: cfg, st: st, auth: a, log: log,
-		limite: nouveauLimiteur(), courriel: exp}
+	return &Server{cfg: cfg, st: st, auth: a, log: log, courriel: exp}
 }
 
 // contexte de requête : l'utilisateur authentifié est passé via le contexte.
@@ -210,69 +207,6 @@ func (s *Server) ipDe(r *http.Request) string {
 	return host
 }
 
-// --- Limiteur de tentatives de connexion ---
-
-// limiteur bloque le bourrage d'identifiants : 10 tentatives par IP et par
-// tranche de 15 minutes. En mémoire, donc remis à zéro au redémarrage : c'est
-// suffisant pour une instance communale.
-type limiteur struct {
-	mu         sync.Mutex
-	tentatives map[string][]time.Time
-}
-
-const (
-	limiteFenetre = 15 * time.Minute
-	limiteMax     = 10
-)
-
-func nouveauLimiteur() *limiteur {
-	return &limiteur{tentatives: map[string][]time.Time{}}
-}
-
-func (l *limiteur) autorise(cle string) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	maintenant := time.Now()
-	recentes := l.tentatives[cle][:0]
-	for _, t := range l.tentatives[cle] {
-		if maintenant.Sub(t) < limiteFenetre {
-			recentes = append(recentes, t)
-		}
-	}
-	if len(recentes) >= limiteMax {
-		l.tentatives[cle] = recentes
-		return false
-	}
-	l.tentatives[cle] = append(recentes, maintenant)
-	return true
-}
-
-func (l *limiteur) reussite(cle string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.tentatives, cle)
-}
-
-// purger évite que la table grossisse indéfiniment sur une instance exposée.
-func (l *limiteur) purger() {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	maintenant := time.Now()
-	for cle, ts := range l.tentatives {
-		garde := ts[:0]
-		for _, t := range ts {
-			if maintenant.Sub(t) < limiteFenetre {
-				garde = append(garde, t)
-			}
-		}
-		if len(garde) == 0 {
-			delete(l.tentatives, cle)
-		} else {
-			l.tentatives[cle] = garde
-		}
-	}
-}
-
 // --- Utilitaires de paramètres ---
 
 func idPath(r *http.Request, nom string) (int64, bool) {
@@ -291,6 +225,3 @@ func queryInt(r *http.Request, nom string, def int) int {
 	}
 	return def
 }
-
-// PurgerLimiteur libère la mémoire des tentatives de connexion périmées.
-func (s *Server) PurgerLimiteur() { s.limite.purger() }

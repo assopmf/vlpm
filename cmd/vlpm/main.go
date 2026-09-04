@@ -86,7 +86,7 @@ func run() error {
 	// Ménage périodique : sessions expirées et compteurs de tentatives.
 	ctx, arreterMenage := context.WithCancel(context.Background())
 	defer arreterMenage()
-	go menage(ctx, authSvc, srv, log)
+	go menage(ctx, authSvc, st, log)
 	go entretienQuotidien(ctx, st, cfg, expediteur, log)
 
 	ln, err := net.Listen("tcp", cfg.Addr)
@@ -121,7 +121,7 @@ func run() error {
 	return nil
 }
 
-func menage(ctx context.Context, a *auth.Service, srv *api.Server, log *slog.Logger) {
+func menage(ctx context.Context, a *auth.Service, st *store.Store, log *slog.Logger) {
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 	for {
@@ -134,7 +134,11 @@ func menage(ctx context.Context, a *auth.Service, srv *api.Server, log *slog.Log
 			} else if n > 0 {
 				log.Info("sessions expirées supprimées", "nombre", n)
 			}
-			srv.PurgerLimiteur()
+			if n, err := st.PurgerTentatives(); err != nil {
+				log.Warn("purge des tentatives de connexion", "erreur", err)
+			} else if n > 0 {
+				log.Info("tentatives de connexion périmées supprimées", "nombre", n)
+			}
 		}
 	}
 }

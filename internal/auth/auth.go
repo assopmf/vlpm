@@ -70,7 +70,7 @@ type Service struct {
 func New(st *store.Store) *Service { return &Service{st: st} }
 
 // Login vérifie les identifiants et ouvre une session.
-func (s *Service) Login(matricule, motDePasse, userAgent string) (*store.User, string, error) {
+func (s *Service) Login(matricule, motDePasse, userAgent, ip string) (*store.User, string, error) {
 	u, err := s.st.UserByMatricule(matricule)
 	if err != nil {
 		// On compare quand même contre un hash factice valide : sans cela, un
@@ -86,7 +86,7 @@ func (s *Service) Login(matricule, motDePasse, userAgent string) (*store.User, s
 		return nil, "", ErrCompteInactif
 	}
 
-	token, err := s.creerSession(u.ID, userAgent)
+	token, err := s.creerSession(u.ID, userAgent, ip)
 	if err != nil {
 		return nil, "", err
 	}
@@ -102,7 +102,7 @@ func (s *Service) VerifierMotDePasse(u *store.User, motDePasse string) bool {
 
 // creerSession génère un jeton aléatoire de 256 bits. Seul son SHA-256 est
 // stocké : une copie de la base ne permet pas de rejouer les sessions.
-func (s *Service) creerSession(userID int64, userAgent string) (string, error) {
+func (s *Service) creerSession(userID int64, userAgent, ip string) (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("génération du jeton: %w", err)
@@ -110,8 +110,9 @@ func (s *Service) creerSession(userID int64, userAgent string) (string, error) {
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	expire := time.Now().UTC().Add(DureeSession).Format(time.RFC3339)
 
-	if _, err := s.st.DB.Exec(`INSERT INTO sessions (token, user_id, expires_at, user_agent)
-		VALUES (?,?,?,?)`, hashToken(token), userID, expire, tronquer(userAgent, 200)); err != nil {
+	if _, err := s.st.DB.Exec(`INSERT INTO sessions (token, user_id, expires_at, user_agent, ip)
+		VALUES (?,?,?,?,?)`, hashToken(token), userID, expire, tronquer(userAgent, 200),
+		tronquer(ip, 64)); err != nil {
 		return "", err
 	}
 	return token, nil
@@ -168,6 +169,11 @@ func (s *Service) PurgerSessions() (int64, error) {
 	}
 	return res.RowsAffected()
 }
+
+// HashJeton expose le condensat d'un jeton : la liste des sessions le compare
+// à celui stocké pour marquer l'appareil courant, sans jamais manipuler le
+// jeton en clair hors de l'authentification.
+func HashJeton(token string) string { return hashToken(token) }
 
 func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))

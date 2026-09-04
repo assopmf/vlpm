@@ -20,7 +20,9 @@ func (s *Server) Handler() http.Handler {
 
 	// --- Public ---
 	mux.HandleFunc("POST /api/v1/auth/login", s.postLogin)
-	mux.HandleFunc("GET /api/v1/version", s.getVersion)
+	// La version n'est plus publique : elle renseignerait un attaquant sur les
+	// failles connues d'une version donnée, pour aucun bénéfice.
+	mux.HandleFunc("GET /api/v1/version", s.authentifier(s.getVersion))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if err := s.st.DB.Ping(); err != nil {
 			erreur(w, http.StatusServiceUnavailable, "Base de données injoignable.", "base_indisponible")
@@ -33,6 +35,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/logout", s.authentifier(s.postLogout))
 	mux.HandleFunc("GET /api/v1/moi", s.authentifier(s.getMoi))
 	mux.HandleFunc("POST /api/v1/moi/mot-de-passe", s.authentifier(s.postChangerMotDePasse))
+	mux.HandleFunc("GET /api/v1/moi/sessions", s.authentifier(s.getSessions))
+	mux.HandleFunc("DELETE /api/v1/moi/sessions/{id}", s.authentifier(s.deleteSession))
+	mux.HandleFunc("POST /api/v1/moi/sessions/revoquer-autres", s.authentifier(s.postRevoquerAutresSessions))
 
 	// --- Parc ---
 	mux.HandleFunc("GET /api/v1/vehicules", s.authentifier(s.getVehicles))

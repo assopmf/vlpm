@@ -33,8 +33,21 @@ Authorization: Bearer yBk3…
 Il vaut 12 heures. Passé ce délai, l'API répond `401` avec le code
 `non_authentifie` ; il faut se reconnecter.
 
-Après dix échecs de connexion en quinze minutes, l'adresse IP est bloquée
-temporairement et l'API répond `429`.
+Deux limites encadrent les échecs de connexion, appliquées avant même la
+comparaison du mot de passe, et répondant `429 trop_de_tentatives` :
+
+| Axe | Limite | Ce qu'il couvre |
+|---|---|---|
+| Adresse IP | 10 par quart d'heure | un balayage d'identifiants depuis une machine |
+| Matricule | 5 par quart d'heure | le même compte attaqué depuis plusieurs adresses |
+
+Les compteurs sont persistés : un redémarrage du serveur ne les remet pas à
+zéro. Le blocage se lève seul au bout de la fenêtre — jamais de verrouillage
+définitif, qui permettrait de paralyser un service entier. Une connexion
+réussie solde le compteur.
+
+Le matricule est comptabilisé qu'il corresponde ou non à un compte existant :
+la réponse ne renseigne donc pas sur l'existence d'un compte.
 
 ## Erreurs
 
@@ -80,6 +93,9 @@ identifiant stable, destiné au traitement programmatique.
 | `POST /auth/logout` | agent | Ferme la session courante |
 | `GET /moi` | agent | Profil, et véhicule détenu le cas échéant |
 | `POST /moi/mot-de-passe` | agent | Change le mot de passe |
+| `GET /moi/sessions` | agent | Liste les appareils connectés au compte |
+| `DELETE /moi/sessions/{id}` | agent | Coupe une session précise |
+| `POST /moi/sessions/revoquer-autres` | agent | Coupe tout sauf l'appareil courant |
 
 `GET /moi` renvoie le véhicule que l'agent a en main, ce qui permet à un écran
 d'accueil de proposer directement la restitution :
@@ -90,6 +106,25 @@ d'accueil de proposer directement la restitution :
 
 Changer son mot de passe **ferme toutes les sessions**, y compris celle qui a
 émis la requête.
+
+`GET /moi/sessions` renvoie les sessions encore valides, avec une description
+de l'appareil déduite de l'en-tête `User-Agent`, l'adresse d'origine et un
+drapeau `actuelle`. Le jeton lui-même n'apparaît jamais.
+
+```json
+[{"id": 1, "appareil": "Android — Chrome", "ip": "10.0.0.5",
+  "created_at": "2026-09-03T18:20:00Z", "expires_at": "2026-09-04T06:20:00Z",
+  "actuelle": true}]
+```
+
+C'est la réponse au téléphone perdu : l'accès est retiré immédiatement, sans
+attendre l'expiration ni l'intervention d'un chef. Une session appartenant à un
+autre agent répond `404` — un identifiant deviné ne permet pas de déconnecter
+quelqu'un d'autre.
+
+**Note pour une application mobile** : renseignez un `User-Agent` explicite,
+par exemple `VLPM-Android/1.0 (Android 14)`. L'agent reconnaîtra son téléphone
+dans la liste au lieu d'y lire « Appareil inconnu ».
 
 ## Véhicules
 
@@ -441,10 +476,13 @@ compte.
 
 | Route | Rôle | Description |
 |---|---|---|
-| `GET /version` | — | Version de l'application |
+| `GET /version` | agent | Version de l'application |
 | `GET /healthz` | — | Sonde de santé (hors `/api/v1`) |
 
 `/healthz` vérifie l'accès à la base et répond `503` si elle est injoignable.
+C'est **la seule route ouverte** avec la connexion : `/version` exige une
+session, sa divulgation renseignant un attaquant sur les failles connues d'une
+version donnée.
 
 ---
 

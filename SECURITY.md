@@ -6,7 +6,7 @@ qu'un simple parc automobile.
 
 ## Comment signaler
 
-**N'ouvrez pas d'issue publique.** Écrivez à **dev.assopmfrance@gmail.com** en
+**N'ouvrez pas d'issue publique.** Écrivez à **assopmfrance@gmail.com** en
 indiquant :
 
 - ce que la faille permet de faire ;

@@ -5,7 +5,7 @@ labels: anomalie
 ---
 
 **N'utilisez pas ce formulaire pour une faille de sécurité** : écrivez à
-dev.assopmfrance@gmail.com (voir [SECURITY.md](../../SECURITY.md)).
+assopmfrance@gmail.com (voir [SECURITY.md](../../SECURITY.md)).
 
 ## Ce qui se passe
 

@@ -1,0 +1,46 @@
+# Vérification à chaque poussée : format, analyse statique et tests.
+name: Vérification
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verifier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Format
+        run: |
+          non_formates=$(gofmt -l .)
+          if [ -n "$non_formates" ]; then
+            echo "Fichiers non formatés :"
+            echo "$non_formates"
+            exit 1
+          fi
+
+      - name: Analyse statique
+        run: go vet ./...
+
+      - name: Tests
+        run: go test -timeout 5m ./...
+
+      # La compilation croisée est la voie de distribution du projet : la
+      # vérifier ici évite de découvrir une régression au moment d'une version.
+      - name: Compilation croisée
+        run: |
+          for cible in linux/amd64 linux/arm64 linux/arm darwin/arm64 darwin/amd64 windows/amd64; do
+            echo "  $cible"
+            GOOS=${cible%/*} GOARCH=${cible#*/} CGO_ENABLED=0 \
+              go build -trimpath -o /dev/null ./cmd/vlpm
+          done

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Faille de sécurité
+    url: https://github.com/assopmf/vlpm/security/policy
+    about: Ne l'ouvrez pas en public — écrivez à dev.assopmfrance@gmail.com
+  - name: Contacter l'association
+    url: https://assopmf.fr
+    about: Questions générales sur Police Municipale France – PMF

@@ -1,0 +1,51 @@
+# Publication des exécutables à chaque version étiquetée (git tag v1.2.3).
+name: Publication
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # nécessaire pour créer la release et y joindre les fichiers
+
+jobs:
+  publier:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Tests
+        run: go test -timeout 5m ./...
+
+      - name: Compilation des six plateformes
+        run: make dist VERSION=${GITHUB_REF_NAME}
+
+      - name: Création de la release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/vlpm-*
+            dist/SHA256SUMS
+          body: |
+            Téléchargez l'exécutable correspondant à votre machine, rendez-le
+            exécutable (`chmod +x`) et lancez-le. Aucune installation, aucune
+            base de données à configurer.
+
+            | Système | Fichier |
+            |---|---|
+            | Linux (VPS, serveur x86) | `vlpm-linux-amd64` |
+            | Linux ARM (Raspberry Pi 4/5) | `vlpm-linux-arm64` |
+            | Raspberry Pi plus ancien | `vlpm-linux-arm` |
+            | macOS (Apple Silicon) | `vlpm-darwin-arm64` |
+            | macOS (Intel) | `vlpm-darwin-amd64` |
+            | Windows | `vlpm-windows-amd64.exe` |
+
+            Vérifiez l'empreinte du fichier téléchargé avec `SHA256SUMS`.
+
+            Voir le [README](https://github.com/assopmf/vlpm#readme) pour
+            l'installation en service et la mise en production.

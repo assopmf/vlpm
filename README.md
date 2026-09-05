@@ -575,9 +575,19 @@ de la base ne permet pas de rejouer les sessions ouvertes.
 
 ---
 
+## À propos
+
+Développé pour **Police Municipale France – PMF**, association loi 1901
+(RNA W133042745), et mis à disposition des services de police municipale qui
+souhaitent l'utiliser.
+
+- Site : <https://assopmf.fr>
+- Contact : <assopmfrance@gmail.com>
+
 ## Licence
 
 [EUPL-1.2](LICENSE) — Licence Publique de l'Union Européenne.
+Copyright © 2026 Police Municipale France – PMF.
 
 Ce choix tient à la nature du projet : l'EUPL est conçue pour les
 administrations publiques européennes, elle fait foi en français comme dans les

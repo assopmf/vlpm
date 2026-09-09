@@ -240,9 +240,9 @@ function vueConnexion() {
         const destination = sessionStorage.getItem('vlpm.destination');
         sessionStorage.removeItem('vlpm.destination');
         if (rep.user.must_change_password) {
+          // L'écran des réglages affiche déjà cet avertissement quand le
+          // drapeau est levé : le poser ici aussi le doublait.
           await aller('/reglages');
-          poserMessage('attention',
-            'Votre mot de passe est provisoire. Changez-le dès maintenant.');
           return;
         }
         await aller(destination || '/');
@@ -854,6 +854,30 @@ function arreterCamera() {
 }
 window.addEventListener('popstate', arreterCamera);
 
+// pontAndroid : présent uniquement dans l'application Android, qui expose un
+// scanner natif. Un navigateur refuse la caméra hors HTTPS ; l'application
+// native n'a pas cette restriction, ce qui donne un scanner fonctionnel aux
+// communes dont l'instance n'a pas encore de certificat.
+function pontAndroid() {
+  try {
+    return window.VLPMAndroid?.estApplicationNative?.() ? window.VLPMAndroid : null;
+  } catch {
+    return null;
+  }
+}
+
+// scannerNatif ouvre le scanner de l'application et résout avec la valeur lue,
+// ou null si l'agent a annulé.
+function scannerNatif() {
+  return new Promise((resolve) => {
+    window.__vlpmScanResultat = (valeur) => {
+      delete window.__vlpmScanResultat;
+      resolve(valeur);
+    };
+    pontAndroid().scannerQR();
+  });
+}
+
 async function vueScan(jetonDirect) {
   // Cas d'un QR ouvert depuis l'appareil photo du téléphone : l'adresse
   // contient déjà le jeton, il n'y a rien à scanner.
@@ -868,7 +892,8 @@ async function vueScan(jetonDirect) {
     }
   }
 
-  const supporte = 'BarcodeDetector' in window;
+  const natif = pontAndroid();
+  const supporte = !natif && 'BarcodeDetector' in window;
   poser(`
     ${retour('/', 'Retour au tableau de bord')}
     <header class="entete">
@@ -876,11 +901,16 @@ async function vueScan(jetonDirect) {
       <p class="sous-titre">Visez le QR code collé dans le véhicule</p>
     </header>
     <div id="zone-message"></div>
+    ${natif ? `
+      <div class="carte">
+        <button class="btn" data-action="scanner-natif">${icones.qr} Ouvrir le scanner</button>
+      </div>` : ''}
     ${supporte ? `
       <div class="carte">
         <video id="scan-video" playsinline muted></video>
-      </div>` : message('info',
-        "Votre navigateur ne sait pas lire les QR codes. Saisissez le code du véhicule ci-dessous.")}
+      </div>` : ''}
+    ${!natif && !supporte ? message('info',
+        "Votre navigateur ne sait pas lire les QR codes. Saisissez le code du véhicule ci-dessous.") : ''}
     <div class="carte">
       <form id="form-code">
         <div class="champ" style="margin-bottom:12px">
@@ -907,7 +937,21 @@ async function vueScan(jetonDirect) {
     aller(`/vehicule/${v.id}`);
   });
 
-  if (supporte) demarrerScan();
+  if (natif) {
+    // Le scanner s'ouvre d'emblée : l'agent a choisi « Scanner », il n'a pas
+    // à appuyer une seconde fois.
+    app.querySelector('[data-action="scanner-natif"]')
+      .addEventListener('click', lancerScanNatif);
+    lancerScanNatif();
+  } else if (supporte) {
+    demarrerScan();
+  }
+}
+
+async function lancerScanNatif() {
+  const valeur = await scannerNatif();
+  if (valeur === null || valeur === undefined) return; // annulé par l'agent
+  await ouvrirDepuisQR(valeur);
 }
 
 async function demarrerScan() {

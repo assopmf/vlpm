@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="marine">#1e3a8a</color>
+    <color name="marine_fonce">#172554</color>
+    <color name="fond">#f1f5f9</color>
+    <color name="blanc">#ffffff</color>
+    <color name="texte">#0f172a</color>
+    <color name="texte_doux">#64748b</color>
+</resources>

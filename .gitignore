@@ -20,3 +20,15 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Android
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+/android/.idea/
+*.apk
+*.aab
+# Trousseau de signature : ne doit jamais être versionné
+*.jks
+*.keystore

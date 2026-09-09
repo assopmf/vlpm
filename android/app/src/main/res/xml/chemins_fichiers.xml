@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Les photos de constat transitent par le cache : l'interface web les
+         réduit puis les téléverse, aucune n'a vocation à rester en local. -->
+    <cache-path name="photos" path="photos/" />
+</paths>

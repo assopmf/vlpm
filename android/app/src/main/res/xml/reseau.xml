@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Le trafic en clair est autorisé parce qu'une commune peut n'avoir aucun
+  certificat au départ : l'application doit fonctionner sur un réseau interne
+  en HTTP, sinon elle est inutilisable là où elle sert le plus.
+
+  C'est un compromis assumé, pas un oubli. L'application avertit l'utilisateur
+  quand la connexion n'est pas chiffrée, et le README recommande HTTPS.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <!-- Certificats installés par l'administrateur du terminal : une
+                 collectivité disposant de sa propre autorité interne peut
+                 ainsi employer HTTPS sans certificat public. -->
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

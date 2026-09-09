@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">VLPM</string>
+    <string name="configuration_titre">Adresse du serveur</string>
+    <string name="configuration_explication">Saisissez l\'adresse de l\'instance VLPM de votre service. Elle vous est communiquée par votre chef de service.</string>
+    <string name="configuration_exemple">https://vlpm.villeexemple.fr</string>
+    <string name="configuration_valider">Se connecter</string>
+    <string name="configuration_verification">Vérification de l\'adresse…</string>
+    <string name="erreur_adresse_vide">Saisissez une adresse.</string>
+    <string name="erreur_injoignable">Serveur injoignable à cette adresse. Vérifiez l\'adresse et votre connexion réseau.</string>
+    <string name="erreur_pas_vlpm">Cette adresse répond, mais ne correspond pas à un serveur VLPM.</string>
+    <string name="avertissement_http">Connexion non chiffrée (HTTP). Vos identifiants circulent en clair : signalez-le à votre chef de service.</string>
+    <string name="scan_consigne">Visez le QR code collé dans le véhicule</string>
+    <string name="camera_refusee">Sans accès à la caméra, le scan des QR codes est impossible. Vous pouvez saisir le code du véhicule à la main.</string>
+    <string name="hors_ligne">Hors ligne — vos saisies seront transmises au retour du réseau.</string>
+    <string name="changer_serveur">Changer de serveur</string>
+    <string name="quitter_confirmation">Appuyez à nouveau pour quitter</string>
+</resources>

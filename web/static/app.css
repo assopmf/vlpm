@@ -375,3 +375,42 @@ input[type=file] {
   text-align: center; user-select: all;
   word-break: break-all; line-height: 1.7;
 }
+
+/* --- Planche d'étiquettes --- */
+
+.planche {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 14px;
+}
+
+.etiquette {
+  background: #fff;
+  border: 1px dashed #94a3b8;   /* trait de découpe */
+  border-radius: 10px;
+  padding: 16px 12px;
+  text-align: center;
+  color: #0f172a;               /* couleurs fixes : une étiquette s'imprime */
+  break-inside: avoid;
+}
+.etiquette img {
+  width: 100%; max-width: 170px; height: auto;
+  display: block; margin: 8px auto;
+}
+.etiquette-code {
+  font-size: 2.1rem; font-weight: 800; letter-spacing: -.02em; line-height: 1;
+}
+.etiquette-modele { font-size: .9rem; color: #475569; margin-top: 2px; }
+.etiquette-consigne { font-size: .74rem; color: #475569; line-height: 1.35; }
+.etiquette-immat {
+  font-size: .8rem; font-weight: 700; color: #0f172a;
+  margin-top: 6px; letter-spacing: .04em;
+}
+
+@media print {
+  /* Trois étiquettes par ligne sur A4, découpables. */
+  .planche { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .sans-impression { display: none !important; }
+  .etiquette { border-color: #cbd5e1; page-break-inside: avoid; }
+  @page { margin: 12mm; }
+}

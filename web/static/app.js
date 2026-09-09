@@ -28,6 +28,7 @@ const routes = [
   [/^\/vehicule\/(\d+)$/, (m) => vueFicheVehicule(Number(m[1]))],
   [/^\/vehicule\/(\d+)\/modifier$/, (m) => vueFormVehicule(Number(m[1]))],
   [/^\/parc\/nouveau$/, () => vueFormVehicule(null)],
+  [/^\/etiquettes$/, () => vueEtiquettes()],
   [/^\/prendre\/(\d+)$/, (m) => vuePriseEnCompte(Number(m[1]))],
   [/^\/restituer\/(\d+)$/, (m) => vueRestitution(Number(m[1]))],
   [/^\/historique$/, () => vueHistorique()],
@@ -379,8 +380,10 @@ async function vueAccueil() {
                 data-action="filtrer" data-statut="${v}">${l}</button>`).join('')}
     </div>
     ${session.peut('chef') ? `
-      <a class="btn secondaire" href="/parc/nouveau" style="margin-bottom:14px">
-        Ajouter un véhicule</a>` : ''}
+      <div class="duo">
+        <a class="btn secondaire" href="/parc/nouveau">Ajouter un véhicule</a>
+        <a class="btn secondaire" href="/etiquettes">${icones.qr} Étiquettes</a>
+      </div>` : ''}
     ${vehicules.length
       ? vehicules.map((v) => carteVehicule(v)).join('')
       : vide(filtreParc === 'tous'
@@ -1201,8 +1204,13 @@ async function afficherQR(id, code) {
       <h2 style="margin-bottom:12px">Étiquette ${esc(code)}</h2>
       <img class="qr-apercu" src="${url}" alt="QR code du véhicule ${esc(code)}">
       <p class="discret" style="text-align:center;margin-bottom:12px">
-        Imprimez cette étiquette et collez-la dans le véhicule.</p>
-      <a class="btn secondaire" href="${url}" download="qr-${esc(code)}.png">Télécharger</a>`;
+        Collez-la à un endroit visible depuis le siège conducteur.</p>
+      <div class="duo" style="margin-bottom:0">
+        <a class="btn secondaire compact" style="width:100%"
+           href="/etiquettes">Planche complète</a>
+        <a class="btn secondaire compact" style="width:100%"
+           href="${url}" download="qr-${esc(code)}.png">Télécharger</a>
+      </div>`;
   } catch (err) {
     bloc.innerHTML = message('erreur', err.message);
   }
@@ -1397,7 +1405,7 @@ async function vueFormVehicule(id) {
           const cree = await api.creerVehicule(donnees);
           await aller(`/vehicule/${cree.id}`);
           poserMessage('succes',
-            `${cree.code} ajouté au parc. Imprimez son étiquette QR depuis sa fiche.`);
+            `${cree.code} ajouté au parc. Son étiquette QR est prête à imprimer.`);
         } else {
           await api.modifierVehicule(id, donnees);
           await aller(`/vehicule/${id}`);
@@ -2179,6 +2187,79 @@ async function vueReleve() {
       }
     });
   });
+}
+
+
+// --- Étiquettes à coller dans les véhicules ----------------------------------
+
+// Une commune qui démarre avec dix véhicules ne va pas télécharger dix PNG un
+// par un. Cet écran compose une planche imprimable en une fois, découpable,
+// et lisible : le code du véhicule doit se reconnaître à distance, sans avoir
+// à scanner, quand un agent cherche le bon véhicule sur un parking.
+
+async function vueEtiquettes() {
+  if (!session.peut('chef')) return vue404();
+  chargement();
+  const vehicules = (await api.vehicules('tous')).filter((v) => !v.archive);
+
+  if (!vehicules.length) {
+    poser(retour('/', 'Retour au tableau de bord')
+      + vide("Aucun véhicule au parc. Ajoutez-en un pour imprimer son étiquette.",
+             icones.vehicule));
+    return;
+  }
+
+  poser(`
+    ${retour('/', 'Retour au tableau de bord')}
+    <header class="entete sans-impression">
+      <h1>Étiquettes des véhicules</h1>
+      <p class="sous-titre">À imprimer, découper et coller dans chaque véhicule</p>
+    </header>
+    <div id="zone-message" class="sans-impression"></div>
+
+    <div class="carte sans-impression">
+      <p class="discret" style="margin-bottom:12px">
+        ${nombre(vehicules.length)} étiquette${vehicules.length > 1 ? 's' : ''}.
+        Collez-les à un endroit visible depuis le siège conducteur, à l'abri du
+        soleil : un QR code décoloré ne se lit plus.</p>
+      <button class="btn" data-action="imprimer">${icones.qr} Imprimer la planche</button>
+    </div>
+
+    <div class="planche" id="planche">
+      ${vehicules.map((v) => `
+        <div class="etiquette">
+          <div class="etiquette-code">${esc(v.code)}</div>
+          <div class="etiquette-modele">${esc([v.marque, v.modele].filter(Boolean).join(' '))}</div>
+          <img data-etiquette="${v.id}" alt="QR ${esc(v.code)}">
+          <div class="etiquette-consigne">Scannez avec l'application VLPM<br>
+            pour prendre ce véhicule en compte</div>
+          ${v.immatriculation ? `<div class="etiquette-immat">${esc(v.immatriculation)}</div>` : ''}
+        </div>`).join('')}
+    </div>`);
+
+  await chargerEtiquettes();
+
+  surClic((action) => {
+    if (action === 'imprimer') window.print();
+  });
+}
+
+// chargerEtiquettes récupère les QR un par un : l'API exige l'en-tête
+// d'authentification, une balise <img src> nue serait refusée.
+async function chargerEtiquettes() {
+  const images = [...app.querySelectorAll('img[data-etiquette]')];
+  for (const img of images) {
+    try {
+      const rep = await fetch(`/api/v1/vehicules/${img.dataset.etiquette}/qrcode.png?taille=512`, {
+        headers: { Authorization: `Bearer ${session.jeton()}` },
+      });
+      if (!rep.ok) throw new Error('indisponible');
+      img.src = URL.createObjectURL(await rep.blob());
+    } catch {
+      img.replaceWith(Object.assign(document.createElement('p'),
+        { className: 'discret', textContent: 'QR indisponible' }));
+    }
+  }
 }
 
 // --- Conservation des données ------------------------------------------------

@@ -464,8 +464,13 @@ reçu chaque semaine finit par ne plus être lu, et emporte les autres avec lui.
 
 ### Étiquettes QR
 
-Depuis la fiche d'un véhicule, un chef génère l'étiquette PNG à imprimer et
-coller dans l'habitacle. Le QR encode un jeton opaque, jamais le numéro
+Depuis **Accueil → Étiquettes**, un chef imprime la planche complète du parc :
+trois étiquettes par page A4, découpables, avec le code du véhicule en gros —
+il doit se reconnaître à distance sur un parking, sans avoir à scanner. Une
+étiquette isolée reste téléchargeable en PNG depuis la fiche du véhicule.
+
+Collez-les à un endroit visible depuis le siège conducteur et à l'abri du
+soleil : un QR code décoloré ne se lit plus. Le QR encode un jeton opaque, jamais le numéro
 d'immatriculation ni l'identifiant interne : une étiquette photographiée
 n'apprend rien à qui n'a pas de compte.
 

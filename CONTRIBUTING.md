@@ -13,6 +13,15 @@ make verifier   # format, vet et tests
 Ces trois-là doivent passer. Le dépôt n'a pas de configuration de formatage
 propre : `gofmt` fait autorité.
 
+Comptez environ une minute pour les tests : `internal/api` monte un serveur
+complet sur une base neuve pour chaque cas, ce qui est lent mais garantit
+qu'aucun test n'hérite de l'état d'un autre.
+
+**Si vous touchez aux droits d'accès**, la table `toutesLesRoutes` dans
+[`internal/api/roles_test.go`](internal/api/roles_test.go) recense chaque
+route et le rôle qu'elle exige. Toute route ajoutée doit y figurer : c'est ce
+qui empêche qu'une protection saute sans que rien ne devienne rouge.
+
 ## Ce que le projet cherche à rester
 
 **Installable sans compétence particulière.** Un service peut n'avoir personne

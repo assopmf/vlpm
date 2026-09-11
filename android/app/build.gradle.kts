@@ -25,17 +25,23 @@ android {
     // Sans lui, une mise à jour ne peut pas s'installer par-dessus la version
     // précédente : Android exige la même signature, et désinstaller efface les
     // saisies locales des agents.
-    val trousseau = System.getenv("VLPM_TROUSSEAU")
-    val trousseauDisponible = !trousseau.isNullOrBlank() && file(trousseau).exists()
+    // Une variable vide vaut absente. L'intégration continue transmet un secret
+    // non déclaré sous forme de chaîne vide, pas de valeur nulle : sans ce
+    // filtre, omettre l'alias ou le mot de passe de clé — présentés comme
+    // facultatifs — donnait un alias vide et faisait échouer la signature.
+    fun variable(nom: String): String? = System.getenv(nom)?.takeIf { it.isNotBlank() }
+
+    val trousseau = variable("VLPM_TROUSSEAU")
+    val trousseauDisponible = trousseau != null && file(trousseau).exists()
 
     signingConfigs {
         if (trousseauDisponible) {
             create("publication") {
                 storeFile = file(trousseau!!)
-                storePassword = System.getenv("VLPM_TROUSSEAU_MOT_DE_PASSE")
-                keyAlias = System.getenv("VLPM_TROUSSEAU_ALIAS") ?: "vlpm"
-                keyPassword = System.getenv("VLPM_CLE_MOT_DE_PASSE")
-                    ?: System.getenv("VLPM_TROUSSEAU_MOT_DE_PASSE")
+                storePassword = variable("VLPM_TROUSSEAU_MOT_DE_PASSE")
+                keyAlias = variable("VLPM_TROUSSEAU_ALIAS") ?: "vlpm"
+                keyPassword = variable("VLPM_CLE_MOT_DE_PASSE")
+                    ?: variable("VLPM_TROUSSEAU_MOT_DE_PASSE")
             }
         }
     }

@@ -42,9 +42,18 @@ oblige à désinstaller l'application**, ce qui efface ses données.
 Créez le trousseau une fois pour toutes, et **conservez-le** :
 
 ```bash
-keytool -genkeypair -v -keystore vlpm.jks -keyalg RSA -keysize 4096 \
-        -validity 10000 -alias vlpm
+keytool -genkeypair -v -keystore vlpm.jks -alias vlpm -keyalg RSA -keysize 4096 \
+        -validity 10000 \
+        -dname "CN=Police Municipale France, O=Police Municipale France - PMF, L=La Ciotat, C=FR"
 ```
+
+L'option `-dname` fixe l'identité inscrite dans le certificat. Sans elle,
+`keytool` demande « Quels sont vos prénom et nom ? » et grave la réponse dans
+chaque APK signé, où n'importe qui peut la lire avec `apksigner`. Le
+certificat doit désigner l'association, pas la personne qui l'a créé.
+
+Sans Java installé, `keytool` est fourni par Android Studio :
+`"/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool"`.
 
 `vlpm.jks` ne doit **jamais** être versionné — le `.gitignore` l'exclut déjà.
 Perdez-le, et plus aucune mise à jour ne pourra être installée par-dessus.

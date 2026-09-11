@@ -13,19 +13,45 @@ android {
         // collectivités, où le renouvellement du parc est lent.
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        // Version fournie par la chaîne de publication, dérivée de l'étiquette
+        // git : l'APK et les exécutables serveur d'une même release portent
+        // ainsi le même numéro. Valeurs par défaut pour une compilation locale.
+        versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("versionName") as String?) ?: "0.0.0-local"
         resourceConfigurations += listOf("fr")
+    }
+
+    // Trousseau de publication, fourni par l'environnement et jamais versionné.
+    // Sans lui, une mise à jour ne peut pas s'installer par-dessus la version
+    // précédente : Android exige la même signature, et désinstaller efface les
+    // saisies locales des agents.
+    val trousseau = System.getenv("VLPM_TROUSSEAU")
+    val trousseauDisponible = !trousseau.isNullOrBlank() && file(trousseau).exists()
+
+    signingConfigs {
+        if (trousseauDisponible) {
+            create("publication") {
+                storeFile = file(trousseau!!)
+                storePassword = System.getenv("VLPM_TROUSSEAU_MOT_DE_PASSE")
+                keyAlias = System.getenv("VLPM_TROUSSEAU_ALIAS") ?: "vlpm"
+                keyPassword = System.getenv("VLPM_CLE_MOT_DE_PASSE")
+                    ?: System.getenv("VLPM_TROUSSEAU_MOT_DE_PASSE")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // L'application n'est pas distribuée par un magasin : elle
-            // s'installe par APK, ce qui exige une signature. À défaut de
-            // trousseau fourni, on retombe sur la signature de débogage pour
-            // que la compilation aboutisse quand même.
-            signingConfig = signingConfigs.getByName("debug")
+            // À défaut de trousseau, la signature de débogage permet au moins
+            // de produire un APK d'essai. Il ne doit pas être distribué : la
+            // clé de débogage diffère d'une machine à l'autre, et sur un
+            // serveur d'intégration continue elle est régénérée à chaque fois.
+            signingConfig = if (trousseauDisponible) {
+                signingConfigs.getByName("publication")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

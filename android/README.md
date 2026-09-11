@@ -49,6 +49,36 @@ keytool -genkeypair -v -keystore vlpm.jks -keyalg RSA -keysize 4096 \
 `vlpm.jks` ne doit **jamais** être versionné — le `.gitignore` l'exclut déjà.
 Perdez-le, et plus aucune mise à jour ne pourra être installée par-dessus.
 
+### Signature par l'intégration continue
+
+La publication d'une version (`git tag v1.2.3`) compile l'APK sur GitHub. Pour
+qu'il soit signé avec le trousseau de l'association, déclarez ces secrets dans
+*Settings → Secrets and variables → Actions* :
+
+| Secret | Contenu |
+|---|---|
+| `VLPM_TROUSSEAU_BASE64` | le fichier `vlpm.jks` encodé : `base64 -i vlpm.jks` |
+| `VLPM_TROUSSEAU_MOT_DE_PASSE` | mot de passe du trousseau |
+| `VLPM_TROUSSEAU_ALIAS` | alias de la clé (`vlpm` par défaut) |
+| `VLPM_CLE_MOT_DE_PASSE` | mot de passe de la clé, s'il diffère du précédent |
+
+**Sans ces secrets**, la release contient `vlpm-android-essai.apk`, signé avec
+une clé de débogage régénérée à chaque compilation. Il permet d'essayer
+l'application, mais aucune version suivante ne pourra s'installer par-dessus.
+
+### Numérotation
+
+Le `versionCode` Android est dérivé de l'étiquette : `v1.2.3` donne `10203`.
+Une préversion (`v1.3.0-rc1`) porte le même code que la version finale
+(`v1.3.0`), qui ne pourra donc pas s'installer par-dessus sans désinstaller :
+réservez les préversions aux terminaux d'essai.
+
+Compilation locale avec une version donnée :
+
+```bash
+./gradlew assembleRelease -PversionName=1.2.3 -PversionCode=10203
+```
+
 ## Installer sur un terminal
 
 ```bash
